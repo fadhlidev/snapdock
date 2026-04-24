@@ -9,6 +9,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/fadhlidev/snapdock/internal/crypto"
 	"github.com/fadhlidev/snapdock/internal/docker"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
@@ -102,7 +103,18 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 		Encrypted:   encrypt,
 	}
 
-	result, err := snapshot.Pack(ctx, client, snap, opts, outputDir)
+	// Prompt for passphrase if encryption is requested
+	var passphrase string
+	if encrypt {
+		pass, err := crypto.PromptPassphrase()
+		if err != nil {
+			red.Fprintf(os.Stderr, "✗ %v\n", err)
+			return err
+		}
+		passphrase = pass
+	}
+
+	result, err := snapshot.Pack(ctx, client, snap, opts, outputDir, passphrase)
 	if err != nil {
 		red.Fprintf(os.Stderr, "✗ failed to create snapshot: %v\n", err)
 		return err
