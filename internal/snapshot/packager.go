@@ -32,6 +32,7 @@ type PackageResult struct {
 //	env.json         — []EnvVar (plaintext; Phase 5 adds encryption)
 //	networks.json    — []NetworkDetail
 //	mounts.json      — MountCatalog
+//	mounts/          — Volume tar files (if --with-volumes)
 //
 // After writing the archive, SHA-256 is computed and:
 //   - Written to <name>.sfx.sha256 on disk
@@ -56,6 +57,22 @@ func Pack(
 	}
 
 	mounts := CatalogMounts(snap)
+
+	// Create temp directory for volume tars
+	tempDir, err := os.MkdirTemp("", "snapdock-pack-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Snapshot volumes if requested
+	var volumeTars VolumeTarInfo
+	if opts.WithVolumes {
+		volumeTars, err = SnapshotVolumes(ctx, client, snap, tempDir)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot volumes failed: %w", err)
+		}
+	}
 
 	// 2. Determine output path
 	ts      := time.Now().UTC().Format("2006-01-02T150405")
@@ -98,6 +115,28 @@ func Pack(
 		return nil
 	}
 
+	// helper: add a binary file to the archive
+	addFile := func(archivePath, hostPath string) error {
+		data, err := os.ReadFile(hostPath)
+		if err != nil {
+			return fmt.Errorf("read file %s: %w", hostPath, err)
+		}
+		hdr := &tar.Header{
+			Name:     archivePath,
+			Mode:     0o644,
+			Size:     int64(len(data)),
+			ModTime:  time.Now().UTC(),
+			Typeflag: tar.TypeReg,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return fmt.Errorf("write header %s: %w", archivePath, err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			return fmt.Errorf("write data %s: %w", archivePath, err)
+		}
+		return nil
+	}
+
 	// container.json — strip Raw to keep archive lean
 	containerExport := exportableSnapshot(snap)
 
@@ -115,6 +154,16 @@ func Pack(
 	for _, f := range files {
 		if err := addJSON(f.name, f.val); err != nil {
 			return nil, err
+		}
+	}
+
+	// Add volume tar files to mounts/ directory
+	if len(volumeTars) > 0 {
+		for volumeName, tarPath := range volumeTars {
+			archivePath := fmt.Sprintf("mounts/%s.tar.gz", volumeName)
+			if err := addFile(archivePath, tarPath); err != nil {
+				return nil, err
+			}
 		}
 	}
 
