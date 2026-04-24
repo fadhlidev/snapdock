@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -11,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fadhlidev/snapdock/internal/docker"
+	"github.com/fadhlidev/snapdock/internal/snapshot"
+	"github.com/fadhlidev/snapdock/pkg/types"
 )
 
 var snapshotCmd = &cobra.Command{
@@ -32,6 +33,9 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	containerName := args[0]
 	socketPath, _ := cmd.Flags().GetString("socket")
 	verbose, _   := cmd.Flags().GetBool("verbose")
+	withVolumes, _ := cmd.Flags().GetBool("with-volumes")
+	encrypt, _ := cmd.Flags().GetBool("encrypt")
+	outputDir, _ := cmd.Flags().GetString("output")
 
 	bold   := color.New(color.Bold)
 	green  := color.New(color.FgGreen, color.Bold)
@@ -79,7 +83,7 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	bold.Printf("%s", snap.Name)
 	fmt.Printf(" %s\n", dim.Sprintf("(%s)", snap.ID[:12]))
 
-	// Step 3: Print summary
+	// Step 3: Print summary (if not verbose, we just show basic info)
 	fmt.Println()
 	bold.Println("  Container Summary")
 	fmt.Printf("  %-16s %s\n", "Image:", snap.Image)
@@ -88,24 +92,36 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %-16s %d\n", "Networks:", len(snap.Networks))
 	fmt.Printf("  %-16s %d\n", "Ports:", len(snap.Ports))
 	fmt.Printf("  %-16s %d\n", "Mounts:", len(snap.Mounts))
+	fmt.Println()
+
+	// Step 4: Create snapshot package
+	fmt.Printf("  %s creating snapshot package...\n", dim.Sprint("→"))
+
+	opts := types.SnapOptions{
+		WithVolumes: withVolumes,
+		Encrypted:   encrypt,
+	}
+
+	result, err := snapshot.Pack(ctx, client, snap, opts, outputDir)
+	if err != nil {
+		red.Fprintf(os.Stderr, "✗ failed to create snapshot: %v\n", err)
+		return err
+	}
+
+	green.Printf("  ✓ snapshot created\n")
+	fmt.Printf("  %s %s\n", dim.Sprint("→"), result.SfxPath)
+	fmt.Printf("  %s %d bytes\n", dim.Sprint("→"), result.SizeBytes)
+	fmt.Printf("  %s %s\n", dim.Sprint("→"), result.Checksum)
 
 	if verbose {
 		fmt.Println()
 		bold.Println("  Full Snapshot Data (verbose):")
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("  ", "  ")
-		// Print without Raw field to keep output readable
-		snap.Raw = snap.Raw // placeholder — will omit Raw in next phase
-		_ = enc.Encode(map[string]any{
-			"id":        snap.ID,
-			"name":      snap.Name,
-			"image":     snap.Image,
-			"env":       snap.Env,
-			"networks":  snap.Networks,
-			"ports":     snap.Ports,
-			"mounts":    snap.Mounts,
-			"resources": snap.Resources,
-		})
+		fmt.Printf("  %-16s %s\n", "ID:", snap.ID)
+		fmt.Printf("  %-16s %v\n", "Env:", snap.Env)
+		fmt.Printf("  %-16s %v\n", "Networks:", snap.Networks)
+		fmt.Printf("  %-16s %v\n", "Ports:", snap.Ports)
+		fmt.Printf("  %-16s %v\n", "Mounts:", snap.Mounts)
+		fmt.Printf("  %-16s %v\n", "Resources:", snap.Resources)
 	}
 
 	fmt.Println()
