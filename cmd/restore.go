@@ -57,7 +57,12 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %s verifying checksum...\n", dim.Sprint("→"))
 
 	if flagRestoreDryRun {
-		fmt.Printf("  %s [dry-run] would verify checksum for %s\n", cyan.Sprint("→"), sfxPath)
+		// For dry-run, just check if the checksum file exists
+		if _, err := os.Stat(sfxPath + ".sha256"); err == nil {
+			fmt.Printf("  %s [dry-run] checksum file exists, would verify\n", cyan.Sprint("→"))
+		} else {
+			fmt.Printf("  %s [dry-run] no checksum file found, skipping verification\n", cyan.Sprint("→"))
+		}
 	} else {
 		if err := snapshot.VerifyChecksum(sfxPath); err != nil {
 			red.Fprintf(os.Stderr, "✗ checksum verification failed: %v\n", err)
@@ -71,16 +76,17 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	var extracted *snapshot.ExtractedSnapshot
 
-	if flagRestoreDryRun {
-		fmt.Printf("  %s [dry-run] would extract %s to temp directory\n", cyan.Sprint("→"), sfxPath)
-	} else {
-		extracted, err = snapshot.Extract(sfxPath)
-		if err != nil {
-			red.Fprintf(os.Stderr, "✗ failed to extract snapshot: %v\n", err)
-			return err
-		}
-		defer extracted.Cleanup()
+	// Always extract for dry-run to show summary
+	extracted, err = snapshot.Extract(sfxPath)
+	if err != nil {
+		red.Fprintf(os.Stderr, "✗ failed to extract snapshot: %v\n", err)
+		return err
+	}
+	defer extracted.Cleanup()
 
+	if flagRestoreDryRun {
+		fmt.Printf("  %s [dry-run] extracted to %s\n", cyan.Sprint("→"), extracted.TempDir)
+	} else {
 		green.Printf("  ✓ extracted to %s\n", dim.Sprint(extracted.TempDir))
 	}
 
@@ -181,7 +187,34 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 6: Create and start container
+	// Step 6: Restore volumes (if --with-volumes)
+	fmt.Printf("  %s restoring volumes...\n", dim.Sprint("→"))
+
+	if flagRestoreWithVolumes {
+		if flagRestoreDryRun {
+			// Check if mounts directory exists in extracted snapshot
+			mountsDir := filepath.Join(extracted.TempDir, "mounts")
+			if info, err := os.Stat(mountsDir); err == nil && info.IsDir() {
+				entries, _ := os.ReadDir(mountsDir)
+				for _, e := range entries {
+					if !e.IsDir() && len(e.Name()) > 7 && e.Name()[len(e.Name())-7:] == ".tar.gz" {
+						volumeName := e.Name()[:len(e.Name())-7]
+						fmt.Printf("  %s [dry-run] would restore volume %q\n", cyan.Sprint("→"), volumeName)
+					}
+				}
+			}
+		} else {
+			if err := snapshot.RestoreVolumes(ctx, client, extracted, extracted.TempDir); err != nil {
+				red.Fprintf(os.Stderr, "✗ failed to restore volumes: %v\n", err)
+				return err
+			}
+			green.Printf("  ✓ volumes restored\n")
+		}
+	} else {
+		fmt.Printf("  %s skipping volumes (use --with-volumes to restore)\n", dim.Sprint("→"))
+	}
+
+	// Step 7: Create and start container
 	containerName := flagRestoreName
 	if containerName == "" {
 		containerName = extracted.Container.Name + "-restored"
