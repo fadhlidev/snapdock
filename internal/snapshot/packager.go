@@ -153,21 +153,22 @@ func Pack(
 // container.json already has all the structured data we need.
 func exportableSnapshot(snap *docker.ContainerSnapshot) any {
 	return struct {
-		ID        string                `json:"id"`
-		Name      string                `json:"name"`
-		Image     string                `json:"image"`
-		ImageID   string                `json:"image_id"`
-		CreatedAt string                `json:"created_at"`
-		Env       []string              `json:"env"`
-		Labels    map[string]string     `json:"labels"`
-		Cmd       []string              `json:"cmd"`
-		Entrypoint []string             `json:"entrypoint"`
-		WorkingDir string               `json:"working_dir"`
-		User      string                `json:"user"`
-		Hostname  string                `json:"hostname"`
-		Ports     []docker.PortMapping  `json:"ports"`
-		Mounts    []docker.MountInfo    `json:"mounts"`
-		Resources docker.ResourceConfig `json:"resources"`
+		ID         string                `json:"id"`
+		Name       string                `json:"name"`
+		Image      string                `json:"image"`
+		ImageID    string                `json:"image_id"`
+		CreatedAt  string                `json:"created_at"`
+		Env        []string              `json:"env"`
+		Labels     map[string]string     `json:"labels"`
+		Cmd        []string              `json:"cmd"`
+		Entrypoint []string              `json:"entrypoint"`
+		WorkingDir string                `json:"working_dir"`
+		User       string                `json:"user"`
+		Hostname   string                `json:"hostname"`
+		StopSignal string                `json:"stop_signal"`
+		Ports      []docker.PortMapping  `json:"ports"`
+		Mounts     []docker.MountInfo    `json:"mounts"`
+		Resources  docker.ResourceConfig `json:"resources"`
 	}{
 		ID:         snap.ID,
 		Name:       snap.Name,
@@ -181,6 +182,7 @@ func exportableSnapshot(snap *docker.ContainerSnapshot) any {
 		WorkingDir: snap.WorkingDir,
 		User:       snap.User,
 		Hostname:   snap.Hostname,
+		StopSignal: snap.StopSignal,
 		Ports:      snap.Ports,
 		Mounts:     snap.Mounts,
 		Resources:  snap.Resources,

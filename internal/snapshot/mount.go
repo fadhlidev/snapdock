@@ -1,7 +1,7 @@
 package snapshot
 
 import (
-	"github.com/fadhlidev/snapforge/internal/docker"
+	"github.com/fadhlidev/snapdock/internal/docker"
 )
 
 // MountCatalog is the result of phase-1 mount mapping.
