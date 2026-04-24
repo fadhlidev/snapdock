@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fatih/color"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/fadhlidev/snapdock/internal/crypto"
 	"github.com/fadhlidev/snapdock/internal/docker"
+	"github.com/fadhlidev/snapdock/internal/output"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
 )
@@ -42,79 +44,75 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	sfxPath := args[0]
 	socketPath, _ := cmd.Flags().GetString("socket")
 
-	bold   := color.New(color.Bold)
-	green  := color.New(color.FgGreen, color.Bold)
-	red    := color.New(color.FgRed, color.Bold)
-	yellow := color.New(color.FgYellow)
-	dim    := color.New(color.Faint)
-	cyan   := color.New(color.FgCyan)
-
 	absPath, err := filepath.Abs(sfxPath)
 	if err != nil {
 		absPath = sfxPath
 	}
 
-	fmt.Printf("  %s restoring from %s\n", dim.Sprint("→"), yellow.Sprint(filepath.Base(absPath)))
+	output.Infof("Restoring from %s", color.YellowString(filepath.Base(absPath)))
 
 	// Step 1: Verify checksum
-	fmt.Printf("  %s verifying checksum...\n", dim.Sprint("→"))
-
 	if flagRestoreDryRun {
-		// For dry-run, just check if the checksum file exists
 		if _, err := os.Stat(sfxPath + ".sha256"); err == nil {
-			fmt.Printf("  %s [dry-run] checksum file exists, would verify\n", cyan.Sprint("→"))
+			output.DryRun("Checksum file exists, would verify")
 		} else {
-			fmt.Printf("  %s [dry-run] no checksum file found, skipping verification\n", cyan.Sprint("→"))
+			output.DryRun("No checksum file found, skipping verification")
 		}
 	} else {
+		s := output.NewSpinner("Verifying checksum...")
+		s.Start()
 		if err := snapshot.VerifyChecksum(sfxPath); err != nil {
-			red.Fprintf(os.Stderr, "✗ checksum verification failed: %v\n", err)
+			s.Stop()
+			output.Errorf("Checksum verification failed: %v", err)
 			return err
 		}
-		green.Printf("  ✓ checksum verified\n")
+		s.Stop()
+		output.Success("Checksum verified")
 	}
 
 	// Step 2: Extract snapshot
-	fmt.Printf("  %s extracting snapshot...\n", dim.Sprint("→"))
-
-	var extracted *snapshot.ExtractedSnapshot
+	s := output.NewSpinner("Extracting snapshot...")
+	s.Start()
 
 	// Always extract for dry-run to show summary
-	extracted, err = snapshot.Extract(sfxPath)
+	extracted, err := snapshot.Extract(sfxPath)
 	if err != nil {
-		red.Fprintf(os.Stderr, "✗ failed to extract snapshot: %v\n", err)
+		s.Stop()
+		output.Errorf("Failed to extract snapshot: %v", err)
 		return err
 	}
+	// We don't defer Cleanup here because we need it for the whole function, 
+	// and we might return early. Defer is fine as long as we don't return early before it.
 	defer extracted.Cleanup()
 
+	s.Stop()
 	if flagRestoreDryRun {
-		fmt.Printf("  %s [dry-run] extracted to %s\n", cyan.Sprint("→"), extracted.TempDir)
+		output.DryRunf("Extracted to %s", extracted.TempDir)
 	} else {
-		green.Printf("  ✓ extracted to %s\n", dim.Sprint(extracted.TempDir))
+		output.Successf("Extracted to %s", color.HiBlackString(extracted.TempDir))
 	}
 
 	// Step 2b: Check for encrypted env and decrypt if needed
 	encPath := filepath.Join(extracted.TempDir, "env.json.enc")
 	if _, err := os.Stat(encPath); err == nil {
-		// Encrypted env detected
-		fmt.Printf("  %s encrypted environment variables detected...\n", dim.Sprint("→"))
+		output.Infof("Encrypted environment variables detected")
 
 		if flagRestoreDryRun {
-			fmt.Printf("  %s [dry-run] would prompt for passphrase to decrypt env\n", cyan.Sprint("→"))
+			output.DryRun("Would prompt for passphrase to decrypt env")
 		} else {
 			passphrase, err := crypto.PromptPassphraseSingle()
 			if err != nil {
-				red.Fprintf(os.Stderr, "✗ %v\n", err)
+				output.Errorf("%v", err)
 				return err
 			}
 
 			decrypted, err := snapshot.DecryptEnv(extracted.TempDir, passphrase)
 			if err != nil {
-				red.Fprintf(os.Stderr, "✗ failed to decrypt environment: %v\n", err)
+				output.Errorf("Failed to decrypt environment: %v", err)
 				return err
 			}
 			if decrypted {
-				green.Printf("  ✓ environment variables decrypted\n")
+				output.Success("Environment variables decrypted")
 			}
 		}
 	}
@@ -125,7 +123,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		container := extracted.Container
 
 		fmt.Println()
-		bold.Println("  Snapshot Summary")
+		color.New(color.Bold).Println("  Snapshot Summary")
 		fmt.Printf("  %-16s %s\n", "Container:", container.Name)
 		fmt.Printf("  %-16s %s\n", "Image:", container.Image)
 		fmt.Printf("  %-16s %s\n", "Created:", manifest.CreatedAt.Format(time.RFC1123))
@@ -135,11 +133,13 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 3: Connect to Docker
-	fmt.Printf("  %s connecting to Docker daemon...\n", dim.Sprint("→"))
+	s = output.NewSpinner("Connecting to Docker daemon...")
+	s.Start()
 
 	client, err := docker.NewClient(socketPath)
 	if err != nil {
-		red.Fprintf(os.Stderr, "✗ %v\n", err)
+		s.Stop()
+		output.Errorf("%v", err)
 		return err
 	}
 	defer client.Close()
@@ -148,36 +148,36 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	if err := client.Ping(ctx); err != nil {
-		red.Fprintf(os.Stderr, "✗ %v\n", err)
+		s.Stop()
+		output.Errorf("%v", err)
 		return err
 	}
 
 	version, _ := client.Version(ctx)
-	green.Printf("  ✓ connected")
+	s.Stop()
 	if version != "" {
-		fmt.Printf("  %s\n", dim.Sprintf("(Docker %s)", version))
+		output.Successf("Connected %s", color.HiBlackString("(Docker %s)", version))
 	} else {
-		fmt.Println()
+		output.Success("Connected")
 	}
 
 	// Step 4: Recreate networks
-	fmt.Printf("  %s ensuring networks exist...\n", dim.Sprint("→"))
+	output.Infof("Ensuring networks exist...")
 
 	if flagRestoreDryRun {
 		for _, net := range extracted.Networks {
-			fmt.Printf("  %s [dry-run] would ensure network %q (driver: %s, subnet: %s)\n",
-				cyan.Sprint("→"), net.Name, net.Driver, net.Subnet)
+			output.DryRunf("Would ensure network %q (driver: %s, subnet: %s)", net.Name, net.Driver, net.Subnet)
 		}
 	} else {
 		for _, net := range extracted.Networks {
 			exists, err := client.NetworkExists(ctx, net.Name)
 			if err != nil {
-				red.Fprintf(os.Stderr, "✗ failed to check network %s: %v\n", net.Name, err)
+				output.Errorf("Failed to check network %s: %v", net.Name, err)
 				return err
 			}
 
 			if exists {
-				fmt.Printf("  %s network %q already exists\n", dim.Sprint("✓"), net.Name)
+				fmt.Printf("  %s network %q already exists\n", color.HiBlackString("✓"), net.Name)
 			} else {
 				netCfg := docker.NetworkConfig{
 					Driver: net.Driver,
@@ -187,37 +187,36 @@ func runRestore(cmd *cobra.Command, args []string) error {
 				}
 				_, err := client.CreateNetwork(ctx, net.Name, netCfg)
 				if err != nil {
-					red.Fprintf(os.Stderr, "✗ failed to create network %s: %v\n", net.Name, err)
+					output.Errorf("Failed to create network %s: %v", net.Name, err)
 					return err
 				}
-				green.Printf("  ✓ created network %q\n", net.Name)
+				output.Successf("Created network %q", net.Name)
 			}
 		}
 	}
 
 	// Step 5: Pull image
 	imageName := extracted.Container.Image
-
-	fmt.Printf("  %s ensuring image %s exists...\n", dim.Sprint("→"), yellow.Sprint(imageName))
+	output.Infof("Ensuring image %s exists...", color.YellowString(imageName))
 
 	if flagRestoreDryRun {
-		fmt.Printf("  %s [dry-run] would pull image %s if missing\n", cyan.Sprint("→"), imageName)
+		output.DryRunf("Would pull image %s if missing", imageName)
 	} else {
 		pulled, err := client.PullImageIfMissing(ctx, imageName, os.Stdout)
 		if err != nil {
-			red.Fprintf(os.Stderr, "✗ failed to pull image: %v\n", err)
+			output.Errorf("Failed to pull image: %v", err)
 			return err
 		}
 
 		if pulled {
-			green.Printf("  ✓ pulled image %s\n", imageName)
+			output.Successf("Pulled image %s", imageName)
 		} else {
-			fmt.Printf("  %s image %s already exists locally\n", dim.Sprint("✓"), imageName)
+			fmt.Printf("  %s image %s already exists locally\n", color.HiBlackString("✓"), imageName)
 		}
 	}
 
 	// Step 6: Restore volumes (if --with-volumes)
-	fmt.Printf("  %s restoring volumes...\n", dim.Sprint("→"))
+	output.Infof("Restoring volumes...")
 
 	if flagRestoreWithVolumes {
 		if flagRestoreDryRun {
@@ -226,21 +225,21 @@ func runRestore(cmd *cobra.Command, args []string) error {
 			if info, err := os.Stat(mountsDir); err == nil && info.IsDir() {
 				entries, _ := os.ReadDir(mountsDir)
 				for _, e := range entries {
-					if !e.IsDir() && len(e.Name()) > 7 && e.Name()[len(e.Name())-7:] == ".tar.gz" {
-						volumeName := e.Name()[:len(e.Name())-7]
-						fmt.Printf("  %s [dry-run] would restore volume %q\n", cyan.Sprint("→"), volumeName)
+					if !e.IsDir() && strings.HasSuffix(e.Name(), ".tar.gz") {
+						volumeName := strings.TrimSuffix(e.Name(), ".tar.gz")
+						output.DryRunf("Would restore volume %q", volumeName)
 					}
 				}
 			}
 		} else {
 			if err := snapshot.RestoreVolumes(ctx, client, extracted, extracted.TempDir); err != nil {
-				red.Fprintf(os.Stderr, "✗ failed to restore volumes: %v\n", err)
+				output.Errorf("Failed to restore volumes: %v", err)
 				return err
 			}
-			green.Printf("  ✓ volumes restored\n")
+			output.Success("Volumes restored")
 		}
 	} else {
-		fmt.Printf("  %s skipping volumes (use --with-volumes to restore)\n", dim.Sprint("→"))
+		fmt.Printf("  %s skipping volumes (use --with-volumes to restore)\n", color.HiBlackString("→"))
 	}
 
 	// Step 7: Create and start container
@@ -249,47 +248,48 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		containerName = extracted.Container.Name + "-restored"
 	}
 
-	fmt.Printf("  %s creating container %s...\n", dim.Sprint("→"), yellow.Sprint(containerName))
+	output.Infof("Creating container %s...", color.YellowString(containerName))
 
 	containerCfg := buildContainerConfig(extracted, containerName)
 
 	if flagRestoreDryRun {
-		fmt.Printf("  %s [dry-run] would create container with:\n", cyan.Sprint("→"))
-		fmt.Printf("  %s   image:    %s\n", dim.Sprint("→"), containerCfg.Image)
-		fmt.Printf("  %s   networks: %v\n", dim.Sprint("→"), containerCfg.Networks)
-		fmt.Printf("  %s   binds:    %v\n", dim.Sprint("→"), containerCfg.Binds)
-		fmt.Printf("  %s   tmpfs:    %v\n", dim.Sprint("→"), containerCfg.Tmpfs)
-		fmt.Printf("  %s   env:      %d variables\n", dim.Sprint("→"), len(containerCfg.Env))
+		output.DryRunf("Would create container with:")
+		fmt.Printf("    image:    %s\n", containerCfg.Image)
+		fmt.Printf("    networks: %v\n", containerCfg.Networks)
+		fmt.Printf("    binds:    %v\n", containerCfg.Binds)
+		fmt.Printf("    tmpfs:    %v\n", containerCfg.Tmpfs)
+		fmt.Printf("    env:      %d variables\n", len(containerCfg.Env))
+		output.Info("Dry run complete. No changes were made.")
 	} else {
 		result, err := client.CreateContainer(ctx, *containerCfg)
 		if err != nil {
-			red.Fprintf(os.Stderr, "✗ failed to create container: %v\n", err)
+			output.Errorf("Failed to create container: %v", err)
 			return err
 		}
 
-		green.Printf("  ✓ created container %s\n", result.ID[:12])
+		output.Successf("Created container %s", color.HiBlackString(result.ID[:12]))
 
-		fmt.Printf("  %s starting container...\n", dim.Sprint("→"))
+		output.Infof("Starting container...")
 
 		if err := client.StartContainer(ctx, result.ID); err != nil {
-			red.Fprintf(os.Stderr, "✗ failed to start container: %v\n", err)
+			output.Errorf("Failed to start container: %v", err)
 			return err
 		}
 
-		green.Printf("  ✓ container started\n")
+		output.Success("Container started")
 
 		// Step 7: Health check
-		fmt.Printf("  %s waiting for container to be healthy...\n", dim.Sprint("→"))
+		output.Infof("Waiting for container to be healthy...")
 
 		if err := client.WaitForRunning(ctx, result.ID, 30*time.Second); err != nil {
-			red.Fprintf(os.Stderr, "✗ health check failed: %v\n", err)
+			output.Errorf("Health check failed: %v", err)
 			return err
 		}
 
-		green.Printf("  ✓ container is running\n")
+		output.Success("Container is running")
 
 		fmt.Println()
-		bold.Println("  Restore Complete!")
+		color.New(color.Bold).Println("  Restore Complete!")
 		fmt.Printf("  Container ID:   %s\n", result.ID[:12])
 		fmt.Printf("  Container Name: %s\n", containerName)
 	}

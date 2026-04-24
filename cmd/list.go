@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fadhlidev/snapdock/internal/output"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
 )
@@ -100,19 +101,16 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(snapshots) == 0 {
-		fmt.Println("  No snapshots found")
+		output.Info("No snapshots found")
 		return nil
 	}
 
-	// Display table using fmt
-	fmt.Println()
-	fmt.Printf("  %-28s %-15s %-12s %10s %s\n", "NAME", "CONTAINER", "ID", "SIZE", "CREATED")
-	fmt.Println("  " + strings.Repeat("-", 85))
-
+	var data [][]string
 	for _, s := range snapshots {
-		fmt.Printf("  %-28s %-15s %-12s %10s %s\n", s.name, s.container, s.id, s.size, s.date)
+		data = append(data, []string{s.name, s.container, s.id, s.size, s.date})
 	}
 
+	output.PrintTable([]string{"NAME", "CONTAINER", "ID", "SIZE", "CREATED"}, data)
 	fmt.Println()
 
 	return nil

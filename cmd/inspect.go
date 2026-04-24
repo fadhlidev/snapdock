@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/fadhlidev/snapdock/internal/output"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
 )
@@ -28,11 +29,6 @@ func init() {
 func runInspect(cmd *cobra.Command, args []string) error {
 	sfxPath := args[0]
 
-	bold   := color.New(color.Bold)
-	cyan   := color.New(color.FgCyan)
-	yellow := color.New(color.FgYellow)
-	dim    := color.New(color.Faint)
-
 	// Validate file exists
 	if _, err := os.Stat(sfxPath); err != nil {
 		return fmt.Errorf("snapshot file not found: %w", err)
@@ -43,7 +39,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("file must have .sfx extension")
 	}
 
-	fmt.Printf("  %s inspecting %s\n", dim.Sprint("→"), yellow.Sprint(filepath.Base(sfxPath)))
+	output.Infof("Inspecting %s", color.YellowString(filepath.Base(sfxPath)))
 
 	// Extract to temp dir
 	extracted, err := snapshot.Extract(sfxPath)
@@ -54,29 +50,29 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 	// Display header
 	fmt.Println()
-	bold.Println("  Snapshot:", filepath.Base(sfxPath))
+	output.SuccessColor.Println("  Snapshot:", filepath.Base(sfxPath))
 	fmt.Println()
 
 	// Display manifest info
-	displayManifest(extracted.Manifest, bold, cyan, yellow)
+	displayManifest(extracted.Manifest)
 
 	// Display environment
-	displayEnv(extracted.TempDir, bold, cyan, yellow)
+	displayEnv(extracted.TempDir)
 
 	// Display networks
-	displayNetworks(extracted.Container, bold, cyan)
+	displayNetworks(extracted.Container)
 
 	// Display mounts
-	displayMounts(extracted.TempDir, extracted.Container, bold, cyan)
+	displayMounts(extracted.TempDir, extracted.Container)
 
 	fmt.Println()
 
 	return nil
 }
 
-func displayManifest(m *types.Manifest, bold, cyan, yellow *color.Color) {
-	bold.Println("  Container:")
-	fmt.Printf("    %-12s %s\n", "Name:", cyan.Sprint(m.Container.Name))
+func displayManifest(m *types.Manifest) {
+	output.SuccessColor.Println("  Container:")
+	fmt.Printf("    %-12s %s\n", "Name:", color.CyanString(m.Container.Name))
 	fmt.Printf("    %-12s %s\n", "Image:", m.Container.Image)
 	fmt.Printf("    %-12s %s\n", "ID:", m.Container.ID[:12])
 	fmt.Println()
@@ -86,42 +82,42 @@ func displayManifest(m *types.Manifest, bold, cyan, yellow *color.Color) {
 	fmt.Println()
 }
 
-func displayEnv(tempDir string, bold, cyan, yellow *color.Color) {
-	bold.Println("  Environment Variables:")
+func displayEnv(tempDir string) {
+	output.SuccessColor.Println("  Environment Variables:")
 
 	encPath := filepath.Join(tempDir, "env.json.enc")
 	envPath := filepath.Join(tempDir, "env.json")
 
 	// Check for encrypted env
 	if _, err := os.Stat(encPath); err == nil {
-		fmt.Printf("    %s\n", yellow.Sprint("(Encrypted)"))
+		fmt.Printf("    %s\n", color.YellowString("(Encrypted)"))
 		fmt.Println()
 		return
 	}
 
 	// Read env.json
 	if _, err := os.Stat(envPath); err != nil {
-		fmt.Printf("    %s\n", dim.Sprint("(none)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(none)"))
 		fmt.Println()
 		return
 	}
 
 	data, err := os.ReadFile(envPath)
 	if err != nil {
-		fmt.Printf("    %s\n", dim.Sprint("(error reading)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(error reading)"))
 		fmt.Println()
 		return
 	}
 
 	var envVars []types.EnvVar
 	if err := json.Unmarshal(data, &envVars); err != nil {
-		fmt.Printf("    %s\n", dim.Sprint("(error parsing)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(error parsing)"))
 		fmt.Println()
 		return
 	}
 
 	if len(envVars) == 0 {
-		fmt.Printf("    %s\n", dim.Sprint("(none)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(none)"))
 	} else {
 		for _, e := range envVars {
 			fmt.Printf("    %-20s %s\n", e.Key+":", e.Value)
@@ -130,13 +126,11 @@ func displayEnv(tempDir string, bold, cyan, yellow *color.Color) {
 	fmt.Println()
 }
 
-func displayNetworks(container *snapshot.ContainerJSONExport, bold, cyan *color.Color) {
-	bold.Println("  Networks:")
+func displayNetworks(container *snapshot.ContainerJSONExport) {
+	output.SuccessColor.Println("  Networks:")
 
 	if len(container.Ports) == 0 && len(container.Mounts) == 0 {
-		// Check if there are any network info in the extracted container
-		// For now, just show none if no ports
-		fmt.Printf("    %s\n", dim.Sprint("(none)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(none)"))
 		fmt.Println()
 		return
 	}
@@ -148,22 +142,22 @@ func displayNetworks(container *snapshot.ContainerJSONExport, bold, cyan *color.
 			key := p.ContainerPort + " → " + p.HostPort
 			if !seen[key] {
 				seen[key] = true
-				fmt.Printf("    %s → %s\n", cyan.Sprint(p.ContainerPort), p.HostIP+":"+p.HostPort)
+				fmt.Printf("    %s → %s\n", color.CyanString(p.ContainerPort), p.HostIP+":"+p.HostPort)
 			}
 		}
 	}
 
 	if len(seen) == 0 {
-		fmt.Printf("    %s\n", dim.Sprint("(none)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(none)"))
 	}
 	fmt.Println()
 }
 
-func displayMounts(tempDir string, container *snapshot.ContainerJSONExport, bold, cyan *color.Color) {
-	bold.Println("  Mounts / Volumes:")
+func displayMounts(tempDir string, container *snapshot.ContainerJSONExport) {
+	output.SuccessColor.Println("  Mounts / Volumes:")
 
 	if len(container.Mounts) == 0 {
-		fmt.Printf("    %s\n", dim.Sprint("(none)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(none)"))
 		fmt.Println()
 		return
 	}
@@ -184,7 +178,7 @@ func displayMounts(tempDir string, container *snapshot.ContainerJSONExport, bold
 	for _, m := range container.Mounts {
 		dataIncluded := "No"
 		if m.Type == "volume" && volumeData[m.Name] {
-			dataIncluded = cyan.Sprint("Yes")
+			dataIncluded = color.CyanString("Yes")
 		}
 
 		source := m.Source
@@ -192,7 +186,7 @@ func displayMounts(tempDir string, container *snapshot.ContainerJSONExport, bold
 			source = m.Name
 		}
 
-		fmt.Printf("    %s: %s\n", m.Type, cyan.Sprint(source))
+		fmt.Printf("    %s: %s\n", m.Type, color.CyanString(source))
 		fmt.Printf("      → %s (%s)\n", m.Destination, m.Mode)
 		if m.Type == "volume" {
 			fmt.Printf("      [Data: %s]\n", dataIncluded)

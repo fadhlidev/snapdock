@@ -31,13 +31,6 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	sfx1 := args[0]
 	sfx2 := args[1]
 
-	red    := color.New(color.FgRed)
-	green  := color.New(color.FgGreen)
-	yellow := color.New(color.FgYellow)
-	cyan   := color.New(color.FgCyan)
-	bold   := color.New(color.Bold)
-	dim    := color.New(color.Faint)
-
 	// Validate inputs
 	for _, sfx := range []string{sfx1, sfx2} {
 		if _, err := os.Stat(sfx); err != nil {
@@ -63,22 +56,22 @@ func runDiff(cmd *cobra.Command, args []string) error {
 
 	// Header
 	fmt.Println()
-	fmt.Printf("%s %s\n", dim.Sprint("---"), filepath.Base(sfx1))
-	fmt.Printf("%s %s\n", dim.Sprint("+++"), filepath.Base(sfx2))
+	fmt.Printf("%s %s\n", color.HiBlackString("---"), filepath.Base(sfx1))
+	fmt.Printf("%s %s\n", color.HiBlackString("+++"), filepath.Base(sfx2))
 	fmt.Println()
 
 	// Image comparison
-	bold.Println("Image:")
+	color.New(color.Bold).Println("  Image:")
 	if extracted1.Container.Image != extracted2.Container.Image {
-		fmt.Printf("%s %s\n", red.Sprint("-"), extracted1.Container.Image)
-		fmt.Printf("%s %s\n", green.Sprint("+"), extracted2.Container.Image)
+		fmt.Printf("    %s %s\n", color.RedString("-"), extracted1.Container.Image)
+		fmt.Printf("    %s %s\n", color.GreenString("+"), extracted2.Container.Image)
 	} else {
-		fmt.Printf("  %s\n", cyan.Sprint(extracted1.Container.Image))
+		fmt.Printf("    %s\n", color.CyanString(extracted1.Container.Image))
 	}
 	fmt.Println()
 
 	// Environment variables comparison
-	bold.Println("Environment Variables:")
+	color.New(color.Bold).Println("  Environment Variables:")
 
 	// Check for encryption
 	enc1 := fileExists(filepath.Join(extracted1.TempDir, "env.json.enc"))
@@ -86,27 +79,27 @@ func runDiff(cmd *cobra.Command, args []string) error {
 
 	if enc1 || enc2 {
 		if enc1 && enc2 {
-			fmt.Printf("  %s (both encrypted)\n", yellow.Sprint("Encrypted - cannot diff"))
+			fmt.Printf("    %s (both encrypted)\n", color.YellowString("Encrypted - cannot diff"))
 		} else if enc1 {
-			fmt.Printf("  %s (snapshot1 encrypted)\n", yellow.Sprint("Encrypted - cannot diff"))
+			fmt.Printf("    %s (snapshot1 encrypted)\n", color.YellowString("Encrypted - cannot diff"))
 		} else {
-			fmt.Printf("  %s (snapshot2 encrypted)\n", yellow.Sprint("Encrypted - cannot diff"))
+			fmt.Printf("    %s (snapshot2 encrypted)\n", color.YellowString("Encrypted - cannot diff"))
 		}
 	} else {
 		env1 := parseEnvMap(extracted1.TempDir)
 		env2 := parseEnvMap(extracted2.TempDir)
-		diffEnvVars(env1, env2, red, green, dim)
+		diffEnvVars(env1, env2)
 	}
 	fmt.Println()
 
 	// Port bindings comparison
-	bold.Println("Port Bindings:")
-	diffPorts(extracted1.Container.Ports, extracted2.Container.Ports, red, green, dim)
+	color.New(color.Bold).Println("  Port Bindings:")
+	diffPorts(extracted1.Container.Ports, extracted2.Container.Ports)
 	fmt.Println()
 
 	// Mounts comparison
-	bold.Println("Mounts:")
-	diffMounts(extracted1.Container.Mounts, extracted2.Container.Mounts, red, green, dim)
+	color.New(color.Bold).Println("  Mounts:")
+	diffMounts(extracted1.Container.Mounts, extracted2.Container.Mounts)
 
 	return nil
 }
@@ -136,7 +129,7 @@ func parseEnvMap(tempDir string) map[string]string {
 	return result
 }
 
-func diffEnvVars(env1, env2 map[string]string, red, green, dim *color.Color) {
+func diffEnvVars(env1, env2 map[string]string) {
 	allKeys := make(map[string]bool)
 	for k := range env1 {
 		allKeys[k] = true
@@ -157,20 +150,20 @@ func diffEnvVars(env1, env2 map[string]string, red, green, dim *color.Color) {
 		v2, ok2 := env2[k]
 
 		if !ok1 && ok2 {
-			fmt.Printf("%s %s=%s\n", green.Sprint("+"), k, maskValue(k, v2))
+			fmt.Printf("    %s %s=%s\n", color.GreenString("+"), k, maskValue(k, v2))
 			hasDiff = true
 		} else if ok1 && !ok2 {
-			fmt.Printf("%s %s=%s\n", red.Sprint("-"), k, maskValue(k, v1))
+			fmt.Printf("    %s %s=%s\n", color.RedString("-"), k, maskValue(k, v1))
 			hasDiff = true
 		} else if v1 != v2 {
-			fmt.Printf("%s %s=%s\n", red.Sprint("-"), k, maskValue(k, v1))
-			fmt.Printf("%s %s=%s\n", green.Sprint("+"), k, maskValue(k, v2))
+			fmt.Printf("    %s %s=%s\n", color.RedString("-"), k, maskValue(k, v1))
+			fmt.Printf("    %s %s=%s\n", color.GreenString("+"), k, maskValue(k, v2))
 			hasDiff = true
 		}
 	}
 
 	if !hasDiff {
-		fmt.Printf("  %s\n", dim.Sprint("(no differences)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(no differences)"))
 	}
 }
 
@@ -185,7 +178,7 @@ func maskValue(key, value string) string {
 	return value
 }
 
-func diffPorts(ports1, ports2 []docker.PortMapping, red, green, dim *color.Color) {
+func diffPorts(ports1, ports2 []docker.PortMapping) {
 	makePortMap := func(ports []docker.PortMapping) map[string]string {
 		m := make(map[string]string)
 		for _, p := range ports {
@@ -220,24 +213,24 @@ func diffPorts(ports1, ports2 []docker.PortMapping, red, green, dim *color.Color
 		v2, ok2 := m2[p]
 
 		if !ok1 && ok2 {
-			fmt.Printf("%s %s → %s\n", green.Sprint("+"), p, v2)
+			fmt.Printf("    %s %s → %s\n", color.GreenString("+"), p, v2)
 			hasDiff = true
 		} else if ok1 && !ok2 {
-			fmt.Printf("%s %s → %s\n", red.Sprint("-"), p, v1)
+			fmt.Printf("    %s %s → %s\n", color.RedString("-"), p, v1)
 			hasDiff = true
 		} else if v1 != v2 {
-			fmt.Printf("%s %s → %s\n", red.Sprint("-"), p, v1)
-			fmt.Printf("%s %s → %s\n", green.Sprint("+"), p, v2)
+			fmt.Printf("    %s %s → %s\n", color.RedString("-"), p, v1)
+			fmt.Printf("    %s %s → %s\n", color.GreenString("+"), p, v2)
 			hasDiff = true
 		}
 	}
 
 	if !hasDiff {
-		fmt.Printf("  %s\n", dim.Sprint("(no differences)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(no differences)"))
 	}
 }
 
-func diffMounts(mounts1, mounts2 []docker.MountInfo, red, green, dim *color.Color) {
+func diffMounts(mounts1, mounts2 []docker.MountInfo) {
 	type mountKey struct {
 		dest string
 		typ  string
@@ -286,19 +279,19 @@ func diffMounts(mounts1, mounts2 []docker.MountInfo, red, green, dim *color.Colo
 		v2, ok2 := m2[k]
 
 		if !ok1 && ok2 {
-			fmt.Printf("%s %s: %s → %s\n", green.Sprint("+"), k.typ, v2, k.dest)
+			fmt.Printf("    %s %s: %s → %s\n", color.GreenString("+"), k.typ, v2, k.dest)
 			hasDiff = true
 		} else if ok1 && !ok2 {
-			fmt.Printf("%s %s: %s → %s\n", red.Sprint("-"), k.typ, v1, k.dest)
+			fmt.Printf("    %s %s: %s → %s\n", color.RedString("-"), k.typ, v1, k.dest)
 			hasDiff = true
 		} else if v1 != v2 {
-			fmt.Printf("%s %s: %s → %s\n", red.Sprint("-"), k.typ, v1, k.dest)
-			fmt.Printf("%s %s: %s → %s\n", green.Sprint("+"), k.typ, v2, k.dest)
+			fmt.Printf("    %s %s: %s → %s\n", color.RedString("-"), k.typ, v1, k.dest)
+			fmt.Printf("    %s %s: %s → %s\n", color.GreenString("+"), k.typ, v2, k.dest)
 			hasDiff = true
 		}
 	}
 
 	if !hasDiff {
-		fmt.Printf("  %s\n", dim.Sprint("(no differences)"))
+		fmt.Printf("    %s\n", color.HiBlackString("(no differences)"))
 	}
 }

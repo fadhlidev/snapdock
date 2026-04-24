@@ -1,0 +1,20 @@
+# Binaries
+snapdock
+snapforge
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Snapshots
+*.sfx
+*.sha256
+
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store

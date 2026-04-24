@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/fatih/color"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/fadhlidev/snapdock/internal/crypto"
 	"github.com/fadhlidev/snapdock/internal/docker"
+	"github.com/fadhlidev/snapdock/internal/output"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
 )
@@ -38,18 +38,14 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	encrypt, _ := cmd.Flags().GetBool("encrypt")
 	outputDir, _ := cmd.Flags().GetString("output")
 
-	bold   := color.New(color.Bold)
-	green  := color.New(color.FgGreen, color.Bold)
-	red    := color.New(color.FgRed, color.Bold)
-	yellow := color.New(color.FgYellow)
-	dim    := color.New(color.Faint)
-
 	// Step 1: Connect to Docker daemon
-	fmt.Printf("  %s connecting to Docker daemon...\n", dim.Sprint("→"))
+	s := output.NewSpinner("Connecting to Docker daemon...")
+	s.Start()
 
 	client, err := docker.NewClient(socketPath)
 	if err != nil {
-		red.Fprintf(os.Stderr, "✗ %v\n", err)
+		s.Stop()
+		output.Errorf("%v", err)
 		return err
 	}
 	defer client.Close()
@@ -58,35 +54,33 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	if err := client.Ping(ctx); err != nil {
-		red.Fprintf(os.Stderr, "✗ %v\n", err)
+		s.Stop()
+		output.Errorf("%v", err)
 		return err
 	}
 
 	version, _ := client.Version(ctx)
-	green.Printf("  ✓ connected")
+	s.Stop()
 	if version != "" {
-		fmt.Printf("  %s\n", dim.Sprintf("(Docker %s)", version))
+		output.Successf("Connected %s", color.HiBlackString("(Docker %s)", version))
 	} else {
-		fmt.Println()
+		output.Success("Connected")
 	}
 
 	// Step 2: Inspect container
-	fmt.Printf("  %s inspecting container %s...\n",
-		dim.Sprint("→"), yellow.Sprint(containerName))
+	output.Infof("Inspecting container %s...", color.YellowString(containerName))
 
 	snap, err := client.InspectContainer(ctx, containerName)
 	if err != nil {
-		red.Fprintf(os.Stderr, "✗ %v\n", err)
+		output.Errorf("%v", err)
 		return err
 	}
 
-	green.Printf("  ✓ found container ")
-	bold.Printf("%s", snap.Name)
-	fmt.Printf(" %s\n", dim.Sprintf("(%s)", snap.ID[:12]))
+	output.Successf("Found container %s %s", color.New(color.Bold).Sprint(snap.Name), color.HiBlackString("(%s)", snap.ID[:12]))
 
-	// Step 3: Print summary (if not verbose, we just show basic info)
+	// Step 3: Print summary
 	fmt.Println()
-	bold.Println("  Container Summary")
+	color.New(color.Bold).Println("  Container Summary")
 	fmt.Printf("  %-16s %s\n", "Image:", snap.Image)
 	fmt.Printf("  %-16s %s\n", "Created:", snap.CreatedAt.Format(time.RFC1123))
 	fmt.Printf("  %-16s %d vars\n", "Environment:", len(snap.Env))
@@ -96,38 +90,43 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Step 4: Create snapshot package
-	fmt.Printf("  %s creating snapshot package...\n", dim.Sprint("→"))
+	s = output.NewSpinner("Creating snapshot package...")
+	s.Start()
 
 	opts := types.SnapOptions{
 		WithVolumes: withVolumes,
 		Encrypted:   encrypt,
 	}
 
-	// Prompt for passphrase if encryption is requested
+	// Prompt for passphrase if encryption is requested (stop spinner during prompt)
 	var passphrase string
 	if encrypt {
+		s.Stop()
 		pass, err := crypto.PromptPassphrase()
 		if err != nil {
-			red.Fprintf(os.Stderr, "✗ %v\n", err)
+			output.Errorf("%v", err)
 			return err
 		}
 		passphrase = pass
+		s.Start()
 	}
 
 	result, err := snapshot.Pack(ctx, client, snap, opts, outputDir, passphrase)
 	if err != nil {
-		red.Fprintf(os.Stderr, "✗ failed to create snapshot: %v\n", err)
+		s.Stop()
+		output.Errorf("Failed to create snapshot: %v", err)
 		return err
 	}
 
-	green.Printf("  ✓ snapshot created\n")
-	fmt.Printf("  %s %s\n", dim.Sprint("→"), result.SfxPath)
-	fmt.Printf("  %s %d bytes\n", dim.Sprint("→"), result.SizeBytes)
-	fmt.Printf("  %s %s\n", dim.Sprint("→"), result.Checksum)
+	s.Stop()
+	output.Success("Snapshot created")
+	fmt.Printf("  %s %s\n", color.HiBlackString("→"), result.SfxPath)
+	fmt.Printf("  %s %d bytes\n", color.HiBlackString("→"), result.SizeBytes)
+	fmt.Printf("  %s %s\n", color.HiBlackString("→"), result.Checksum)
 
 	if verbose {
 		fmt.Println()
-		bold.Println("  Full Snapshot Data (verbose):")
+		color.New(color.Bold).Println("  Full Snapshot Data (verbose):")
 		fmt.Printf("  %-16s %s\n", "ID:", snap.ID)
 		fmt.Printf("  %-16s %v\n", "Env:", snap.Env)
 		fmt.Printf("  %-16s %v\n", "Networks:", snap.Networks)
