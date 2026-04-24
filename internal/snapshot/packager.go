@@ -29,7 +29,8 @@ type PackageResult struct {
 //
 //	manifest.json    — Manifest struct
 //	container.json   — Full ContainerSnapshot (without Raw field)
-//	env.json         — []EnvVar (plaintext; Phase 5 adds encryption)
+//	env.json         — []EnvVar (plaintext; or encrypted if opts.Encrypted)
+//	env.json.enc     — encrypted env (if opts.Encrypted)
 //	networks.json    — []NetworkDetail
 //	mounts.json      — MountCatalog
 //	mounts/          — Volume tar files (if --with-volumes)
@@ -43,6 +44,7 @@ func Pack(
 	snap *docker.ContainerSnapshot,
 	opts types.SnapOptions,
 	outputDir string,
+	passphrase string,
 ) (*PackageResult, error) {
 	// 1. Build each component
 	manifest := BuildManifest(snap, opts)
@@ -58,12 +60,33 @@ func Pack(
 
 	mounts := CatalogMounts(snap)
 
-	// Create temp directory for volume tars
+	// Create temp directory for volume tars and env encryption
 	tempDir, err := os.MkdirTemp("", "snapdock-pack-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
+
+	// Write env.json to temp dir for potential encryption
+	envPath := filepath.Join(tempDir, "env.json")
+	envJSON, err := json.MarshalIndent(envVars, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal env: %w", err)
+	}
+	if err := os.WriteFile(envPath, envJSON, 0o644); err != nil {
+		return nil, fmt.Errorf("write env.json: %w", err)
+	}
+
+	// Encrypt env.json if requested
+	if opts.Encrypted && passphrase != "" {
+		encrypted, err := EncryptEnv(tempDir, passphrase)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt env: %w", err)
+		}
+		if encrypted {
+			fmt.Fprintf(os.Stderr, "  ✓ environment variables encrypted\n")
+		}
+	}
 
 	// Snapshot volumes if requested
 	var volumeTars VolumeTarInfo
@@ -146,7 +169,6 @@ func Pack(
 	}{
 		{"manifest.json", manifest},   // written first — readers check this first
 		{"container.json", containerExport},
-		{"env.json", envVars},
 		{"networks.json", networks},
 		{"mounts.json", mounts},
 	}
@@ -154,6 +176,19 @@ func Pack(
 	for _, f := range files {
 		if err := addJSON(f.name, f.val); err != nil {
 			return nil, err
+		}
+	}
+
+	// Add env.json or env.json.enc to archive
+	envFiles := []string{"env.json", "env.json.enc"}
+	for _, envFile := range envFiles {
+		envFilePath := filepath.Join(tempDir, envFile)
+		if _, err := os.Stat(envFilePath); err == nil {
+			archivePath := envFile
+			if err := addFile(archivePath, envFilePath); err != nil {
+				return nil, err
+			}
+			break // only one of them exists
 		}
 	}
 

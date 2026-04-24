@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,8 +11,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/fadhlidev/snapdock/internal/crypto"
 	"github.com/fadhlidev/snapdock/internal/docker"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
+	"github.com/fadhlidev/snapdock/pkg/types"
 )
 
 var restoreCmd = &cobra.Command{
@@ -88,6 +91,32 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s [dry-run] extracted to %s\n", cyan.Sprint("→"), extracted.TempDir)
 	} else {
 		green.Printf("  ✓ extracted to %s\n", dim.Sprint(extracted.TempDir))
+	}
+
+	// Step 2b: Check for encrypted env and decrypt if needed
+	encPath := filepath.Join(extracted.TempDir, "env.json.enc")
+	if _, err := os.Stat(encPath); err == nil {
+		// Encrypted env detected
+		fmt.Printf("  %s encrypted environment variables detected...\n", dim.Sprint("→"))
+
+		if flagRestoreDryRun {
+			fmt.Printf("  %s [dry-run] would prompt for passphrase to decrypt env\n", cyan.Sprint("→"))
+		} else {
+			passphrase, err := crypto.PromptPassphraseSingle()
+			if err != nil {
+				red.Fprintf(os.Stderr, "✗ %v\n", err)
+				return err
+			}
+
+			decrypted, err := snapshot.DecryptEnv(extracted.TempDir, passphrase)
+			if err != nil {
+				red.Fprintf(os.Stderr, "✗ failed to decrypt environment: %v\n", err)
+				return err
+			}
+			if decrypted {
+				green.Printf("  ✓ environment variables decrypted\n")
+			}
+		}
 	}
 
 	// Print summary if not dry-run
@@ -276,7 +305,6 @@ func buildContainerConfig(extracted *snapshot.ExtractedSnapshot, containerName s
 	cfg := &docker.ContainerConfig{
 		Name:         containerName,
 		Image:        container.Image,
-		Env:          container.Env,
 		Cmd:          container.Cmd,
 		Entrypoint:   container.Entrypoint,
 		WorkingDir:   container.WorkingDir,
@@ -286,6 +314,24 @@ func buildContainerConfig(extracted *snapshot.ExtractedSnapshot, containerName s
 		StopSignal:   container.StopSignal,
 		AutoRemove:   false,
 		Privileged:   false,
+	}
+
+	// Try to read env.json (might be decrypted from env.json.enc)
+	envPath := filepath.Join(extracted.TempDir, "env.json")
+	if envData, err := os.ReadFile(envPath); err == nil {
+		// Parse env.json
+		var envVars []types.EnvVar
+		if err := json.Unmarshal(envData, &envVars); err == nil {
+			// Convert back to []string for container config
+			for _, e := range envVars {
+				cfg.Env = append(cfg.Env, e.Key+"="+e.Value)
+			}
+		}
+	}
+
+	// Fallback to container.Env if env.json not found or parse failed
+	if len(cfg.Env) == 0 {
+		cfg.Env = container.Env
 	}
 
 	for _, net := range extracted.Networks {
