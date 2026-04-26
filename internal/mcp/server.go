@@ -12,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/fadhlidev/snapdock/internal/audit"
 	"github.com/fadhlidev/snapdock/internal/docker"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
@@ -80,6 +81,12 @@ func (s *MCPServer) registerTools() {
 		mcp.WithString("file1", mcp.Required(), mcp.Description("Path to the first .sfx file")),
 		mcp.WithString("file2", mcp.Required(), mcp.Description("Path to the second .sfx file")),
 	), s.handleDiffSnapshots)
+
+	// audit_snapshot
+	s.server.AddTool(mcp.NewTool("audit_snapshot",
+		mcp.WithDescription("Audit a snapshot for sensitive information"),
+		mcp.WithString("file", mcp.Required(), mcp.Description("Path to the .sfx snapshot file")),
+	), s.handleAuditSnapshot)
 }
 
 func (s *MCPServer) handleListSnapshots(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -318,6 +325,44 @@ func (s *MCPServer) handleDiffSnapshots(ctx context.Context, request mcp.CallToo
 		env2 := parseEnvMap(extracted2.TempDir)
 		builder.WriteString("Environment Variables: ")
 		s.diffEnvVars(&builder, env1, env2)
+	}
+
+	return mcp.NewToolResultText(builder.String()), nil
+}
+
+func (s *MCPServer) handleAuditSnapshot(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	filePath, err := request.RequireString("file")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	extracted, err := snapshot.Extract(filePath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to extract snapshot: %v", err)), nil
+	}
+	defer extracted.Cleanup()
+
+	scanner := audit.NewScanner()
+	findings := scanner.Scan(extracted.Env)
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("Security Audit Results for %s\n\n", filepath.Base(filePath)))
+
+	if len(findings) == 0 {
+		builder.WriteString("✅ No sensitive information detected in environment variables.\n")
+	} else {
+		for _, f := range findings {
+			icon := "ℹ️"
+			if f.Risk == audit.RiskCritical {
+				icon = "❌"
+			} else if f.Risk == audit.RiskWarning {
+				icon = "⚠️"
+			}
+			builder.WriteString(fmt.Sprintf("%s %s (%s): %s\n", icon, f.Key, f.Risk, f.Description))
+		}
+		builder.WriteString("\nSummary:\n")
+		builder.WriteString(fmt.Sprintf("- Total findings: %d\n", len(findings)))
+		builder.WriteString("\nRecommendation: We recommend using encryption (--encrypt) or a secret manager for sensitive data.")
 	}
 
 	return mcp.NewToolResultText(builder.String()), nil
