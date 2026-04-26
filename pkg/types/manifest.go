@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	SnapforgeVersion = "0.1.0"
+	SnapforgeVersion = "0.1.1"
 	SfxExtension     = ".sfx"
 )
 
