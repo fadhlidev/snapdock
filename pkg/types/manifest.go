@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	SnapforgeVersion = "0.1.0"
+	SnapDockVersion = "0.1.1"
 	SfxExtension     = ".sfx"
 )
 
@@ -15,7 +15,7 @@ const (
 // It is the first file read during restore/inspect to understand
 // what the archive contains and how to unpack it.
 type Manifest struct {
-	SnapforgeVersion string    `json:"snapforge_version"`
+	SnapDockVersion string    `json:"snapdock_version"`
 	CreatedAt        time.Time `json:"created_at"`
 	Checksum         string    `json:"checksum,omitempty"` // SHA-256 of .sfx, filled after pack
 

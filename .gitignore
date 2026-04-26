@@ -1,6 +1,5 @@
 # Binaries
 snapdock
-snapforge
 dist/
 *.exe
 *.exe~

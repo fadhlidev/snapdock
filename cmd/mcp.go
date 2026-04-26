@@ -23,6 +23,6 @@ func init() {
 func runMCP(cmd *cobra.Command, args []string) error {
 	socketPath, _ := cmd.Flags().GetString("socket")
 	
-	srv := mcp.NewServer(types.SnapforgeVersion, socketPath)
+	srv := mcp.NewServer(types.SnapDockVersion, socketPath)
 	return srv.Start()
 }

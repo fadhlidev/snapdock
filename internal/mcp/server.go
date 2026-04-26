@@ -168,7 +168,7 @@ func (s *MCPServer) handleInspectSnapshot(ctx context.Context, request mcp.CallT
 	builder.WriteString(fmt.Sprintf("Container: %s (%s)\n", c.Name, c.ID[:12]))
 	builder.WriteString(fmt.Sprintf("Image: %s\n", c.Image))
 	builder.WriteString(fmt.Sprintf("Created: %s\n", m.CreatedAt.Format("2006-01-02 15:04:05")))
-	builder.WriteString(fmt.Sprintf("SnapDock Version: %s\n", m.SnapforgeVersion))
+	builder.WriteString(fmt.Sprintf("SnapDock Version: %s\n", m.SnapDockVersion))
 	builder.WriteString("\nConfiguration:\n")
 	builder.WriteString(fmt.Sprintf("- Env vars: %d\n", len(c.Env)))
 	builder.WriteString(fmt.Sprintf("- Networks: %d\n", len(extracted.Networks)))

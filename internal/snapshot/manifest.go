@@ -13,7 +13,7 @@ import (
 // .sfx archive has been written to disk.
 func BuildManifest(snap *docker.ContainerSnapshot, opts types.SnapOptions) types.Manifest {
 	return types.Manifest{
-		SnapforgeVersion: types.SnapforgeVersion,
+		SnapDockVersion: types.SnapDockVersion,
 		CreatedAt:        time.Now().UTC(),
 		Container: types.ContainerMeta{
 			ID:        snap.ID,

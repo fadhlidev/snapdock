@@ -78,7 +78,7 @@ func displayManifest(m *types.Manifest) {
 	fmt.Println()
 
 	fmt.Printf("    %-12s %s\n", "Created:", m.CreatedAt.Format("Jan 2, 2006 03:04 PM"))
-	fmt.Printf("    %-12s %s\n", "Version:", m.SnapforgeVersion)
+	fmt.Printf("    %-12s %s\n", "Version:", m.SnapDockVersion)
 	fmt.Println()
 }
 
