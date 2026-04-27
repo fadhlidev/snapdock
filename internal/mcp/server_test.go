@@ -3,6 +3,7 @@ package mcp
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fadhlidev/snapdock/internal/snapshot"
@@ -30,7 +31,7 @@ func TestFormatSize(t *testing.T) {
 
 func TestBuildContainerConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create dummy env.json
 	envPath := filepath.Join(tmpDir, "env.json")
 	envContent := `[{"key": "FOO", "value": "BAR"}]`
@@ -68,3 +69,49 @@ func TestBuildContainerConfig(t *testing.T) {
 		t.Errorf("expected FOO=BAR in env, got %v", cfg.Env)
 	}
 }
+
+func TestDiffEnvVars(t *testing.T) {
+	s := &MCPServer{}
+	var builder strings.Builder
+	
+	env1 := map[string]string{"K1": "V1", "K2": "V2"}
+	env2 := map[string]string{"K1": "V1", "K2": "V2-new", "K3": "V3"}
+
+	s.diffEnvVars(&builder, env1, env2)
+	result := builder.String()
+
+	if !strings.Contains(result, "\n- K2=V2") {
+		t.Errorf("missing - K2=V2 in diff")
+	}
+	if !strings.Contains(result, "\n+ K2=V2-new") {
+		t.Errorf("missing + K2=V2-new in diff")
+	}
+	if !strings.Contains(result, "\n+ K3=V3") {
+		t.Errorf("missing + K3=V3 in diff")
+	}
+}
+
+func TestParseEnvMap(t *testing.T) {
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, "env.json")
+	envContent := `[{"key": "FOO", "value": "BAR"}]`
+	os.WriteFile(envPath, []byte(envContent), 0644)
+
+	envMap := parseEnvMap(tmpDir)
+	if envMap["FOO"] != "BAR" {
+		t.Errorf("expected FOO=BAR, got %v", envMap)
+	}
+}
+
+func TestFileExists(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "test.txt")
+	os.WriteFile(tmpFile, []byte("hello"), 0644)
+
+	if !fileExists(tmpFile) {
+		t.Errorf("expected file to exist")
+	}
+	if fileExists(tmpFile + ".nonexistent") {
+		t.Errorf("expected file to NOT exist")
+	}
+}
+
