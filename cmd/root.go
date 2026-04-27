@@ -36,5 +36,6 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().String("socket", "/var/run/docker.sock", "Docker daemon socket path")
+	rootCmd.PersistentFlags().StringP("file", "f", "snapdock.yaml", "Configuration file path")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 }
