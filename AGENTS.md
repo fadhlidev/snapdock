@@ -13,6 +13,9 @@
 
 ## Notes
 
+- **Workflow**: Always develop using `nix develop` to ensure the correct toolchain.
+- **Testing**: Run `go test ./...` after any changes to ensure no regressions.
+- **New Functions**: If you introduce a new function, you MUST also create corresponding tests for it.
 - This is a new Go project; no additional tooling or CI configured yet
 
 ## Commit Messages
