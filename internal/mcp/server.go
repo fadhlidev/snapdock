@@ -13,7 +13,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/fadhlidev/snapdock/internal/audit"
+	"github.com/fadhlidev/snapdock/internal/config"
 	"github.com/fadhlidev/snapdock/internal/docker"
+	"github.com/fadhlidev/snapdock/internal/retention"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
 	"github.com/fadhlidev/snapdock/pkg/types"
 )
@@ -87,6 +89,32 @@ func (s *MCPServer) registerTools() {
 		mcp.WithDescription("Audit a snapshot for sensitive information"),
 		mcp.WithString("file", mcp.Required(), mcp.Description("Path to the .sfx snapshot file")),
 	), s.handleAuditSnapshot)
+
+	// prune_snapshots
+	s.server.AddTool(mcp.NewTool("prune_snapshots",
+		mcp.WithDescription("Manually prune old snapshots from a directory"),
+		mcp.WithString("directory", mcp.Required(), mcp.Description("Directory containing .sfx snapshots")),
+		mcp.WithNumber("keep", mcp.Description("Number of most recent snapshots to keep (default: 5)")),
+	), s.handlePruneSnapshots)
+
+	// list_scheduler_jobs
+	s.server.AddTool(mcp.NewTool("list_scheduler_jobs",
+		mcp.WithDescription("List all scheduled backup jobs"),
+		mcp.WithString("config_file", mcp.Description("Path to snapdock.yaml (default: snapdock.yaml)")),
+	), s.handleListSchedulerJobs)
+
+	// add_scheduler_job
+	s.server.AddTool(mcp.NewTool("add_scheduler_job",
+		mcp.WithDescription("Add a new scheduled snapshot job"),
+		mcp.WithString("container", mcp.Required(), mcp.Description("Name or ID of the container")),
+		mcp.WithString("schedule", mcp.Required(), mcp.Description("Cron schedule (e.g. '@daily', '0 0 * * *')")),
+		mcp.WithString("name", mcp.Description("Custom name for the job")),
+		mcp.WithNumber("keep", mcp.Description("Number of snapshots to keep (default: 7)")),
+		mcp.WithString("output_dir", mcp.Description("Directory to save snapshots (default: .)")),
+		mcp.WithBoolean("with_volumes", mcp.Description("Include volumes in snapshots")),
+		mcp.WithBoolean("encrypt", mcp.Description("Encrypt environment variables")),
+		mcp.WithString("config_file", mcp.Description("Path to snapdock.yaml (default: snapdock.yaml)")),
+	), s.handleAddSchedulerJob)
 }
 
 func (s *MCPServer) handleListSnapshots(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -366,6 +394,99 @@ func (s *MCPServer) handleAuditSnapshot(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(builder.String()), nil
+}
+
+func (s *MCPServer) handlePruneSnapshots(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	dir, err := request.RequireString("directory")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	keep := request.GetInt("keep", 5)
+
+	if err := retention.PruneDir(dir, keep); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("prune failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Pruning complete in %s. Kept last %d snapshots per container.", dir, keep)), nil
+}
+
+func (s *MCPServer) handleListSchedulerJobs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	configFile := request.GetString("config_file", "snapdock.yaml")
+
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return mcp.NewToolResultText("No configuration file found at " + configFile), nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load config: %v", err)), nil
+	}
+
+	if len(cfg.Jobs) == 0 {
+		return mcp.NewToolResultText("No scheduled jobs found in " + configFile), nil
+	}
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("Scheduled Jobs in %s:\n\n", configFile))
+	for _, job := range cfg.Jobs {
+		builder.WriteString(fmt.Sprintf("- %s: %s (container: %s, keep: %d)\n", job.Name, job.Schedule, job.Container, job.Retention.KeepLast))
+	}
+
+	return mcp.NewToolResultText(builder.String()), nil
+}
+
+func (s *MCPServer) handleAddSchedulerJob(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	container, err := request.RequireString("container")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	schedule, err := request.RequireString("schedule")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	name := request.GetString("name", "backup-"+container)
+	keep := request.GetInt("keep", 7)
+	outputDir := request.GetString("output_dir", ".")
+	withVolumes := request.GetBool("with_volumes", false)
+	encrypt := request.GetBool("encrypt", false)
+	configFile := request.GetString("config_file", "snapdock.yaml")
+
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			cfg = &types.Config{}
+		} else {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to load config: %v", err)), nil
+		}
+	}
+
+	for _, job := range cfg.Jobs {
+		if job.Name == name {
+			return mcp.NewToolResultError(fmt.Sprintf("job with name '%s' already exists", name)), nil
+		}
+	}
+
+	newJob := types.JobConfig{
+		Name:      name,
+		Container: container,
+		Schedule:  schedule,
+		Output:    outputDir,
+		Options: types.JobOptions{
+			WithVolumes: withVolumes,
+			Encrypt:     encrypt,
+		},
+		Retention: types.RetentionConfig{
+			KeepLast: keep,
+		},
+	}
+
+	cfg.Jobs = append(cfg.Jobs, newJob)
+
+	if err := config.Save(configFile, cfg); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to save config: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Job '%s' added successfully to %s.\nNext run schedule: %s", name, configFile, schedule)), nil
 }
 
 func (s *MCPServer) buildContainerConfig(extracted *snapshot.ExtractedSnapshot, containerName string) *docker.ContainerConfig {
