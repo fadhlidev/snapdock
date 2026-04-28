@@ -21,6 +21,8 @@ var rootCmd = &cobra.Command{
     snapdock restore  myapp-2025-04-24.sfx
     snapdock inspect  myapp-2025-04-24.sfx
     snapdock diff     snap-v1.sfx snap-v2.sfx
+    snapdock stack snapshot myproject
+    snapdock stack restore  myproject-stack.sfx
 `,
 		color.New(color.FgRed, color.Bold).Sprint("⚒  SnapDock"),
 		color.New(color.FgYellow).Sprint("Examples:"),
