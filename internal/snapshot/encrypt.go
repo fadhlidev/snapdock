@@ -91,3 +91,28 @@ func DecryptEnv(tempDir, passphrase string) (bool, error) {
 
 	return true, nil
 }
+
+func EncryptEnvToFile(srcPath, passphrase, dstPath string) (bool, error) {
+	if _, err := os.Stat(srcPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check env file: %w", err)
+	}
+
+	envData, err := os.ReadFile(srcPath)
+	if err != nil {
+		return false, fmt.Errorf("read env file: %w", err)
+	}
+
+	encrypted, err := crypto.Encrypt(envData, passphrase)
+	if err != nil {
+		return false, fmt.Errorf("encrypt env: %w", err)
+	}
+
+	if err := os.WriteFile(dstPath, encrypted, 0o644); err != nil {
+		return false, fmt.Errorf("write encrypted file: %w", err)
+	}
+
+	return true, nil
+}
