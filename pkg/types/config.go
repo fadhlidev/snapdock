@@ -7,12 +7,14 @@ type Config struct {
 
 // JobConfig defines a single scheduled snapshot job.
 type JobConfig struct {
-	Name      string          `yaml:"name"`
-	Container string          `yaml:"container"`
-	Schedule  string          `yaml:"schedule"`
-	Output    string          `yaml:"output,omitempty"`
-	Options   JobOptions      `yaml:"options,omitempty"`
-	Retention RetentionConfig `yaml:"retention,omitempty"`
+	Name        string          `yaml:"name"`
+	Type        SnapshotType    `yaml:"type,omitempty"`
+	Container   string          `yaml:"container"`
+	ComposeFile string          `yaml:"compose_file,omitempty"`
+	Schedule    string          `yaml:"schedule"`
+	Output      string          `yaml:"output,omitempty"`
+	Options     JobOptions      `yaml:"options,omitempty"`
+	Retention   RetentionConfig `yaml:"retention,omitempty"`
 }
 
 // JobOptions mirrors SnapOptions but for the config file.

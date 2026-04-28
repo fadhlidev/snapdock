@@ -107,9 +107,11 @@ func (s *MCPServer) registerTools() {
 	// add_scheduler_job
 	s.server.AddTool(mcp.NewTool("add_scheduler_job",
 		mcp.WithDescription("Add a new scheduled snapshot job"),
-		mcp.WithString("container", mcp.Required(), mcp.Description("Name or ID of the container")),
+		mcp.WithString("container", mcp.Required(), mcp.Description("Name or ID of the container (or project name if type is stack)")),
 		mcp.WithString("schedule", mcp.Required(), mcp.Description("Cron schedule (e.g. '@daily', '0 0 * * *')")),
 		mcp.WithString("name", mcp.Description("Custom name for the job")),
+		mcp.WithString("type", mcp.Description("Type of snapshot: 'container' or 'stack' (default: 'container')")),
+		mcp.WithString("compose_file", mcp.Description("Path to docker-compose.yml (required if type is 'stack' and not in CWD)")),
 		mcp.WithNumber("keep", mcp.Description("Number of snapshots to keep (default: 7)")),
 		mcp.WithString("output_dir", mcp.Description("Directory to save snapshots (default: .)")),
 		mcp.WithBoolean("with_volumes", mcp.Description("Include volumes in snapshots")),
@@ -597,6 +599,8 @@ func (s *MCPServer) handleAddSchedulerJob(ctx context.Context, request mcp.CallT
 	outputDir := request.GetString("output_dir", ".")
 	withVolumes := request.GetBool("with_volumes", false)
 	encrypt := request.GetBool("encrypt", false)
+	jobType := request.GetString("type", "container")
+	composeFile := request.GetString("compose_file", "")
 	configFile := request.GetString("config_file", "snapdock.yaml")
 
 	cfg, err := config.Load(configFile)
@@ -615,10 +619,12 @@ func (s *MCPServer) handleAddSchedulerJob(ctx context.Context, request mcp.CallT
 	}
 
 	newJob := types.JobConfig{
-		Name:      name,
-		Container: container,
-		Schedule:  schedule,
-		Output:    outputDir,
+		Name:        name,
+		Type:        types.SnapshotType(jobType),
+		Container:   container,
+		ComposeFile: composeFile,
+		Schedule:    schedule,
+		Output:      outputDir,
 		Options: types.JobOptions{
 			WithVolumes: withVolumes,
 			Encrypt:     encrypt,
@@ -636,6 +642,7 @@ func (s *MCPServer) handleAddSchedulerJob(ctx context.Context, request mcp.CallT
 
 	return mcp.NewToolResultText(fmt.Sprintf("Job '%s' added successfully to %s.\nNext run schedule: %s", name, configFile, schedule)), nil
 }
+
 
 func (s *MCPServer) buildContainerConfig(extracted *snapshot.ExtractedSnapshot, containerName string) *docker.ContainerConfig {
 	container := extracted.Container

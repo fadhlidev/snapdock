@@ -7,6 +7,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/fadhlidev/snapdock/internal/compose"
 	"github.com/fadhlidev/snapdock/internal/docker"
 	"github.com/fadhlidev/snapdock/internal/output"
 	"github.com/fadhlidev/snapdock/internal/retention"
@@ -60,19 +61,6 @@ func (d *Daemon) runJob(job types.JobConfig) {
 		return
 	}
 
-	snap, err := client.InspectContainer(ctx, job.Container)
-	if err != nil {
-		output.Errorf("[%s] Failed to inspect container: %v", job.Name, err)
-		return
-	}
-
-	opts := types.SnapOptions{
-		WithVolumes: job.Options.WithVolumes,
-		Encrypted:   job.Options.Encrypt,
-	}
-
-	// For scheduled jobs, we might need a way to provide passphrase if encrypted.
-	// For now, we'll assume unencrypted or we'd need a way to get it from env.
 	passphrase := os.Getenv("SNAPDOCK_PASSPHRASE")
 
 	outputDir := job.Output
@@ -80,13 +68,50 @@ func (d *Daemon) runJob(job types.JobConfig) {
 		outputDir = "."
 	}
 
-	result, err := snapshot.Pack(ctx, client, snap, opts, outputDir, passphrase)
-	if err != nil {
-		output.Errorf("[%s] Snapshot failed: %v", job.Name, err)
-		return
+	opts := types.SnapOptions{
+		WithVolumes: job.Options.WithVolumes,
+		Encrypted:   job.Options.Encrypt,
 	}
 
-	output.Successf("[%s] Snapshot complete: %s (%s)", job.Name, result.SfxPath, formatSize(result.SizeBytes))
+	if job.Type == types.SnapshotTypeStack {
+		composePath := job.ComposeFile
+		if composePath == "" {
+			dir, _ := os.Getwd()
+			var err error
+			composePath, err = compose.FindComposeFile(dir)
+			if err != nil {
+				output.Errorf("[%s] Failed to find compose file: %v", job.Name, err)
+				return
+			}
+		}
+
+		project, err := compose.ParseComposeFile(composePath)
+		if err != nil {
+			output.Errorf("[%s] Failed to parse compose file: %v", job.Name, err)
+			return
+		}
+
+		result, err := snapshot.PackStack(ctx, client, project, opts, outputDir, passphrase)
+		if err != nil {
+			output.Errorf("[%s] Stack snapshot failed: %v", job.Name, err)
+			return
+		}
+		output.Successf("[%s] Stack snapshot complete: %s (%s)", job.Name, result.SfxPath, formatSize(result.SizeBytes))
+	} else {
+		snap, err := client.InspectContainer(ctx, job.Container)
+		if err != nil {
+			output.Errorf("[%s] Failed to inspect container: %v", job.Name, err)
+			return
+		}
+
+		result, err := snapshot.Pack(ctx, client, snap, opts, outputDir, passphrase)
+		if err != nil {
+			output.Errorf("[%s] Snapshot failed: %v", job.Name, err)
+			return
+		}
+
+		output.Successf("[%s] Snapshot complete: %s (%s)", job.Name, result.SfxPath, formatSize(result.SizeBytes))
+	}
 	
 	// Apply retention
 	if job.Retention.KeepLast > 0 {
