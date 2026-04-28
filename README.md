@@ -67,12 +67,15 @@ Run SnapDock as a background daemon to handle recurring backups.
 **Step 1: Configure jobs**
 ```bash
 # Add a daily backup for 'webapp' keeping only the last 7 snapshots
-snapdock schedule add webapp --cron "@daily" --keep 7 -f backups.yaml
+snapdock schedule add webapp --cron "@daily" --keep 7
+
+# Add a weekly backup for a full Compose stack
+snapdock schedule add my-stack --type stack --cron "@weekly"
 ```
 
 **Step 2: Start the daemon**
 ```bash
-snapdock daemon start -f backups.yaml
+snapdock daemon start
 ```
 
 ### 4. Cleanup & Pruning
@@ -96,7 +99,7 @@ SnapDock includes a **Model Context Protocol (MCP)** server, making it controlla
   }
 }
 ```
-*AI Commands: "List my snapshots", "Snapshot the web container", "Audit the latest backup for leaks".*
+*AI Commands: "Snapshot the entire stack", "List my snapshots", "Audit the latest backup for leaks".*
 
 ## ⚙️ Configuration (`snapdock.yaml`)
 Scheduled jobs are stored in a simple YAML format:
@@ -108,6 +111,11 @@ jobs:
     output: "./backups"
     retention:
       keep_last: 7
+  - name: "weekly-stack-backup"
+    type: "stack"
+    container: "my-project"
+    schedule: "@weekly"
+    output: "./backups"
 ```
 
 ## 🤝 Contributing

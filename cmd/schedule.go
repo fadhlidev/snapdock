@@ -34,6 +34,8 @@ func init() {
 	scheduleAddCmd.Flags().StringP("output", "o", ".", "Output directory for snapshots")
 	scheduleAddCmd.Flags().Bool("volumes", false, "Include volumes in snapshots")
 	scheduleAddCmd.Flags().Bool("encrypt", false, "Encrypt environment variables")
+	scheduleAddCmd.Flags().String("type", "container", "Type of snapshot: 'container' or 'stack'")
+	scheduleAddCmd.Flags().String("compose-file", "", "Path to docker-compose.yml (for stack snapshots)")
 }
 
 func runScheduleAdd(cmd *cobra.Command, args []string) error {
@@ -44,6 +46,8 @@ func runScheduleAdd(cmd *cobra.Command, args []string) error {
 	outputDir, _ := cmd.Flags().GetString("output")
 	withVolumes, _ := cmd.Flags().GetBool("volumes")
 	encrypt, _ := cmd.Flags().GetBool("encrypt")
+	jobType, _ := cmd.Flags().GetString("type")
+	composeFile, _ := cmd.Flags().GetString("compose-file")
 	configFile, _ := cmd.Flags().GetString("file")
 
 	if name == "" {
@@ -68,10 +72,12 @@ func runScheduleAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	newJob := types.JobConfig{
-		Name:      name,
-		Container: container,
-		Schedule:  cron,
-		Output:    outputDir,
+		Name:        name,
+		Type:        types.SnapshotType(jobType),
+		Container:   container,
+		ComposeFile: composeFile,
+		Schedule:    cron,
+		Output:      outputDir,
 		Options: types.JobOptions{
 			WithVolumes: withVolumes,
 			Encrypt:     encrypt,
