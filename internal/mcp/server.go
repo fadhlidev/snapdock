@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/fadhlidev/snapdock/internal/audit"
+	"github.com/fadhlidev/snapdock/internal/compose"
 	"github.com/fadhlidev/snapdock/internal/config"
 	"github.com/fadhlidev/snapdock/internal/docker"
 	"github.com/fadhlidev/snapdock/internal/retention"
@@ -115,6 +116,24 @@ func (s *MCPServer) registerTools() {
 		mcp.WithBoolean("encrypt", mcp.Description("Encrypt environment variables")),
 		mcp.WithString("config_file", mcp.Description("Path to snapdock.yaml (default: snapdock.yaml)")),
 	), s.handleAddSchedulerJob)
+	
+	// snapshot_stack
+	s.server.AddTool(mcp.NewTool("snapshot_stack",
+		mcp.WithDescription("Create a snapshot of a Docker Compose stack"),
+		mcp.WithString("project_name", mcp.Required(), mcp.Description("Name of the Docker Compose project")),
+		mcp.WithString("compose_file", mcp.Description("Path to the docker-compose.yml file (auto-detected if not provided)")),
+		mcp.WithBoolean("encrypt", mcp.Description("Encrypt environment variables in the snapshot")),
+		mcp.WithString("output_dir", mcp.Description("Directory to save the snapshot (default: .)")),
+		mcp.WithString("passphrase", mcp.Description("Passphrase for encrypting sensitive data")),
+	), s.handleSnapshotStack)
+
+	// restore_stack
+	s.server.AddTool(mcp.NewTool("restore_stack",
+		mcp.WithDescription("Restore a Docker Compose stack from a snapshot file"),
+		mcp.WithString("file", mcp.Required(), mcp.Description("Path to the .sfx stack snapshot file")),
+		mcp.WithString("name", mcp.Description("Optional name prefix for the restored stack services")),
+		mcp.WithString("passphrase", mcp.Description("Passphrase for decrypting sensitive data if encrypted")),
+	), s.handleRestoreStack)
 }
 
 func (s *MCPServer) handleListSnapshots(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -626,4 +645,115 @@ func formatSize(bytes int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
+
+func (s *MCPServer) handleSnapshotStack(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	projectName, err := request.RequireString("project_name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	composeFile := request.GetString("compose_file", "")
+	encrypt := request.GetBool("encrypt", false)
+	outputDir := request.GetString("output_dir", ".")
+	passphrase := request.GetString("passphrase", "")
+
+	if composeFile == "" {
+		dir, err := os.Getwd()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to get current directory: %v", err)), nil
+		}
+		composeFile, err = compose.FindComposeFile(dir)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to find compose file: %v", err)), nil
+		}
+	}
+
+	project, err := compose.ParseComposeFile(composeFile)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to parse compose file: %v", err)), nil
+	}
+
+	if projectName != "" && project.Name != projectName {
+		return mcp.NewToolResultError(fmt.Sprintf("project name mismatch: expected %q, got %q", projectName, project.Name)), nil
+	}
+
+	client, err := docker.NewClient(s.socketPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to connect to Docker: %v", err)), nil
+	}
+	defer client.Close()
+
+	if err := client.Ping(ctx); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to ping Docker: %v", err)), nil
+	}
+
+	opts := types.SnapOptions{
+		Encrypted: encrypt,
+	}
+
+	result, err := snapshot.PackStack(ctx, client, project, opts, outputDir, passphrase)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create stack snapshot: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Stack snapshot created successfully:\n- Path: %s\n- Size: %s\n- Checksum: %s\n- Services: %d",
+		result.SfxPath, formatSize(result.SizeBytes), result.Checksum, result.ServiceCount)), nil
+}
+
+func (s *MCPServer) handleRestoreStack(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sfxPath, err := request.RequireString("file")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	restoreName := request.GetString("name", "")
+	passphrase := request.GetString("passphrase", "")
+
+	// Detect type
+	snapType, err := snapshot.DetectSnapshotType(sfxPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to detect snapshot type: %v", err)), nil
+	}
+
+	if snapType != types.SnapshotTypeStack {
+		return mcp.NewToolResultError(fmt.Sprintf("not a stack snapshot: type=%q", snapType)), nil
+	}
+
+	// Verify checksum
+	if err := snapshot.VerifyChecksum(sfxPath); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("checksum verification failed: %v", err)), nil
+	}
+
+	// Extract
+	extracted, err := snapshot.ExtractStack(sfxPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to extract stack snapshot: %v", err)), nil
+	}
+	defer extracted.Cleanup()
+
+	// Connect
+	client, err := docker.NewClient(s.socketPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to connect to Docker: %v", err)), nil
+	}
+	defer client.Close()
+
+	if err := client.Ping(ctx); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to ping Docker: %v", err)), nil
+	}
+
+	// Restore
+	opts := snapshot.RestoreOptions{
+		NewName: restoreName,
+	}
+
+	err = snapshot.RestoreStack(ctx, client, extracted, opts, passphrase)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to restore stack: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Stack restored successfully:\n- Project: %s\n- Services: %d",
+		extracted.Manifest.Project.Name, len(extracted.Compose.Services))), nil
+}
+
 
