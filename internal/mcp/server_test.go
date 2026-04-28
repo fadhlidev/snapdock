@@ -115,3 +115,36 @@ func TestFileExists(t *testing.T) {
 	}
 }
 
+func TestToolRegistration(t *testing.T) {
+	s := NewServer("1.0.0", "/var/run/docker.sock")
+	tools := s.server.ListTools()
+
+	expectedTools := []string{
+		"list_snapshots",
+		"snapshot_container",
+		"inspect_snapshot",
+		"restore_container",
+		"diff_snapshots",
+		"audit_snapshot",
+		"prune_snapshots",
+		"list_scheduler_jobs",
+		"add_scheduler_job",
+		"snapshot_stack",
+		"restore_stack",
+	}
+
+	for _, expected := range expectedTools {
+		found := false
+		for _, tool := range tools {
+			if tool.Tool.Name == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("tool %s not registered", expected)
+		}
+	}
+}
+
+
