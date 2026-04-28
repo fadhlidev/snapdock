@@ -208,33 +208,62 @@ func (s *MCPServer) handleInspectSnapshot(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	extracted, err := snapshot.Extract(filePath)
+	snapType, err := snapshot.DetectSnapshotType(filePath)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to extract snapshot: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to detect snapshot type: %v", err)), nil
 	}
-	defer extracted.Cleanup()
-
-	m := extracted.Manifest
-	c := extracted.Container
 
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("Snapshot: %s\n", filePath))
-	builder.WriteString(fmt.Sprintf("Container: %s (%s)\n", c.Name, c.ID[:12]))
-	builder.WriteString(fmt.Sprintf("Image: %s\n", c.Image))
-	builder.WriteString(fmt.Sprintf("Created: %s\n", m.CreatedAt.Format("2006-01-02 15:04:05")))
-	builder.WriteString(fmt.Sprintf("SnapDock Version: %s\n", m.SnapDockVersion))
-	builder.WriteString("\nConfiguration:\n")
-	builder.WriteString(fmt.Sprintf("- Env vars: %d\n", len(c.Env)))
-	builder.WriteString(fmt.Sprintf("- Networks: %d\n", len(extracted.Networks)))
-	builder.WriteString(fmt.Sprintf("- Ports: %d\n", len(c.Ports)))
-	builder.WriteString(fmt.Sprintf("- Mounts: %d\n", len(c.Mounts)))
+	builder.WriteString(fmt.Sprintf("Type: %s\n", snapType))
 
-	if m.Options.Encrypted {
-		builder.WriteString("- Encryption: AES-256 (Encrypted)\n")
+	if snapType == types.SnapshotTypeStack {
+		extracted, err := snapshot.ExtractStack(filePath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract stack snapshot: %v", err)), nil
+		}
+		defer extracted.Cleanup()
+
+		m := extracted.Manifest
+		builder.WriteString(fmt.Sprintf("Project: %s\n", m.Project.Name))
+		builder.WriteString(fmt.Sprintf("Created: %s\n", m.CreatedAt.Format("2006-01-02 15:04:05")))
+		builder.WriteString(fmt.Sprintf("SnapDock Version: %s\n", m.SnapDockVersion))
+		builder.WriteString(fmt.Sprintf("\nServices (%d):\n", len(m.Services)))
+		for _, svc := range m.Services {
+			builder.WriteString(fmt.Sprintf("- %s (%s)\n", svc.Name, svc.Image))
+		}
+		builder.WriteString(fmt.Sprintf("\nInfrastructure:\n"))
+		builder.WriteString(fmt.Sprintf("- Networks: %d\n", len(m.Networks)))
+		builder.WriteString(fmt.Sprintf("- Volumes: %d\n", len(m.Volumes)))
+		if m.Options.Encrypted {
+			builder.WriteString("- Encryption: AES-256 (Encrypted)\n")
+		}
+	} else {
+		extracted, err := snapshot.Extract(filePath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract snapshot: %v", err)), nil
+		}
+		defer extracted.Cleanup()
+
+		m := extracted.Manifest
+		c := extracted.Container
+		builder.WriteString(fmt.Sprintf("Container: %s (%s)\n", c.Name, c.ID[:12]))
+		builder.WriteString(fmt.Sprintf("Image: %s\n", c.Image))
+		builder.WriteString(fmt.Sprintf("Created: %s\n", m.CreatedAt.Format("2006-01-02 15:04:05")))
+		builder.WriteString(fmt.Sprintf("SnapDock Version: %s\n", m.SnapDockVersion))
+		builder.WriteString("\nConfiguration:\n")
+		builder.WriteString(fmt.Sprintf("- Env vars: %d\n", len(c.Env)))
+		builder.WriteString(fmt.Sprintf("- Networks: %d\n", len(extracted.Networks)))
+		builder.WriteString(fmt.Sprintf("- Ports: %d\n", len(c.Ports)))
+		builder.WriteString(fmt.Sprintf("- Mounts: %d\n", len(c.Mounts)))
+		if m.Options.Encrypted {
+			builder.WriteString("- Encryption: AES-256 (Encrypted)\n")
+		}
 	}
 
 	return mcp.NewToolResultText(builder.String()), nil
 }
+
 
 func (s *MCPServer) handleRestoreContainer(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	sfxPath, err := request.RequireString("file")
@@ -340,42 +369,103 @@ func (s *MCPServer) handleDiffSnapshots(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	extracted1, err := snapshot.Extract(file1)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to extract %s: %v", file1, err)), nil
-	}
-	defer extracted1.Cleanup()
-
-	extracted2, err := snapshot.Extract(file2)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to extract %s: %v", file2, err)), nil
-	}
-	defer extracted2.Cleanup()
+	type1, _ := snapshot.DetectSnapshotType(file1)
+	type2, _ := snapshot.DetectSnapshotType(file2)
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Comparison: %s vs %s\n\n", filepath.Base(file1), filepath.Base(file2)))
+	builder.WriteString(fmt.Sprintf("Comparison: %s vs %s\n", filepath.Base(file1), filepath.Base(file2)))
+	builder.WriteString(fmt.Sprintf("Types: %s vs %s\n\n", type1, type2))
 
-	// Image
-	if extracted1.Container.Image != extracted2.Container.Image {
-		builder.WriteString(fmt.Sprintf("Image changed:\n- %s\n+ %s\n\n", extracted1.Container.Image, extracted2.Container.Image))
-	} else {
-		builder.WriteString(fmt.Sprintf("Image: %s (unchanged)\n\n", extracted1.Container.Image))
+	if type1 != type2 {
+		return mcp.NewToolResultText(builder.String() + "Cannot compare snapshots of different types."), nil
 	}
 
-	// Simple env diff
-	enc1 := fileExists(filepath.Join(extracted1.TempDir, "env.json.enc"))
-	enc2 := fileExists(filepath.Join(extracted2.TempDir, "env.json.enc"))
-	if enc1 || enc2 {
-		builder.WriteString("Environment Variables: (one or both snapshots are encrypted, cannot diff without passphrase)\n")
+	if type1 == types.SnapshotTypeStack {
+		extracted1, err := snapshot.ExtractStack(file1)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract stack %s: %v", file1, err)), nil
+		}
+		defer extracted1.Cleanup()
+
+		extracted2, err := snapshot.ExtractStack(file2)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract stack %s: %v", file2, err)), nil
+		}
+		defer extracted2.Cleanup()
+
+		builder.WriteString("Services Diff:\n")
+		services1 := make(map[string]string)
+		for _, s := range extracted1.Manifest.Services {
+			services1[s.Name] = s.Image
+		}
+		services2 := make(map[string]string)
+		for _, s := range extracted2.Manifest.Services {
+			services2[s.Name] = s.Image
+		}
+
+		allSvc := make(map[string]bool)
+		for n := range services1 {
+			allSvc[n] = true
+		}
+		for n := range services2 {
+			allSvc[n] = true
+		}
+
+		var names []string
+		for n := range allSvc {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+
+		for _, n := range names {
+			img1, ok1 := services1[n]
+			img2, ok2 := services2[n]
+			if ok1 && !ok2 {
+				builder.WriteString(fmt.Sprintf("- %s (image: %s)\n", n, img1))
+			} else if !ok1 && ok2 {
+				builder.WriteString(fmt.Sprintf("+ %s (image: %s)\n", n, img2))
+			} else if img1 != img2 {
+				builder.WriteString(fmt.Sprintf("~ %s:\n  - %s\n  + %s\n", n, img1, img2))
+			} else {
+				builder.WriteString(fmt.Sprintf("  %s (unchanged)\n", n))
+			}
+		}
 	} else {
-		env1 := parseEnvMap(extracted1.TempDir)
-		env2 := parseEnvMap(extracted2.TempDir)
-		builder.WriteString("Environment Variables: ")
-		s.diffEnvVars(&builder, env1, env2)
+		extracted1, err := snapshot.Extract(file1)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract %s: %v", file1, err)), nil
+		}
+		defer extracted1.Cleanup()
+
+		extracted2, err := snapshot.Extract(file2)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract %s: %v", file2, err)), nil
+		}
+		defer extracted2.Cleanup()
+
+		// Image
+		if extracted1.Container.Image != extracted2.Container.Image {
+			builder.WriteString(fmt.Sprintf("Image changed:\n- %s\n+ %s\n\n", extracted1.Container.Image, extracted2.Container.Image))
+		} else {
+			builder.WriteString(fmt.Sprintf("Image: %s (unchanged)\n\n", extracted1.Container.Image))
+		}
+
+		// Simple env diff
+		enc1 := fileExists(filepath.Join(extracted1.TempDir, "env.json.enc"))
+		enc2 := fileExists(filepath.Join(extracted2.TempDir, "env.json.enc"))
+		if enc1 || enc2 {
+			builder.WriteString("Environment Variables: (one or both snapshots are encrypted, cannot diff without passphrase)\n")
+		} else {
+			env1 := parseEnvMap(extracted1.TempDir)
+			env2 := parseEnvMap(extracted2.TempDir)
+			builder.WriteString("Environment Variables: ")
+			s.diffEnvVars(&builder, env1, env2)
+		}
 	}
 
 	return mcp.NewToolResultText(builder.String()), nil
 }
+
 
 func (s *MCPServer) handleAuditSnapshot(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	filePath, err := request.RequireString("file")
@@ -383,37 +473,76 @@ func (s *MCPServer) handleAuditSnapshot(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	extracted, err := snapshot.Extract(filePath)
+	snapType, err := snapshot.DetectSnapshotType(filePath)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to extract snapshot: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to detect snapshot type: %v", err)), nil
 	}
-	defer extracted.Cleanup()
-
-	scanner := audit.NewScanner()
-	findings := scanner.Scan(extracted.Env)
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Security Audit Results for %s\n\n", filepath.Base(filePath)))
+	builder.WriteString(fmt.Sprintf("Security Audit Results for %s (%s)\n\n", filepath.Base(filePath), snapType))
 
-	if len(findings) == 0 {
-		builder.WriteString("✅ No sensitive information detected in environment variables.\n")
-	} else {
-		for _, f := range findings {
-			icon := "ℹ️"
-			if f.Risk == audit.RiskCritical {
-				icon = "❌"
-			} else if f.Risk == audit.RiskWarning {
-				icon = "⚠️"
-			}
-			builder.WriteString(fmt.Sprintf("%s %s (%s): %s\n", icon, f.Key, f.Risk, f.Description))
+	scanner := audit.NewScanner()
+
+	if snapType == types.SnapshotTypeStack {
+		extracted, err := snapshot.ExtractStack(filePath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract stack: %v", err)), nil
 		}
-		builder.WriteString("\nSummary:\n")
-		builder.WriteString(fmt.Sprintf("- Total findings: %d\n", len(findings)))
-		builder.WriteString("\nRecommendation: We recommend using encryption (--encrypt) or a secret manager for sensitive data.")
+		defer extracted.Cleanup()
+
+		totalFindings := 0
+		for svcName, env := range extracted.Envs {
+			findings := scanner.Scan(env)
+			if len(findings) > 0 {
+				builder.WriteString(fmt.Sprintf("Service: %s\n", svcName))
+				for _, f := range findings {
+					icon := "ℹ️"
+					if f.Risk == audit.RiskCritical {
+						icon = "❌"
+						totalFindings++
+					} else if f.Risk == audit.RiskWarning {
+						icon = "⚠️"
+						totalFindings++
+					}
+					builder.WriteString(fmt.Sprintf("  %s %s (%s): %s\n", icon, f.Key, f.Risk, f.Description))
+				}
+				builder.WriteString("\n")
+			}
+		}
+
+		if totalFindings == 0 {
+			builder.WriteString("✅ No sensitive information detected in any service environment variables.\n")
+		} else {
+			builder.WriteString(fmt.Sprintf("Summary: Total critical/warning findings across all services: %d\n", totalFindings))
+		}
+	} else {
+		extracted, err := snapshot.Extract(filePath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to extract snapshot: %v", err)), nil
+		}
+		defer extracted.Cleanup()
+
+		findings := scanner.Scan(extracted.Env)
+		if len(findings) == 0 {
+			builder.WriteString("✅ No sensitive information detected in environment variables.\n")
+		} else {
+			for _, f := range findings {
+				icon := "ℹ️"
+				if f.Risk == audit.RiskCritical {
+					icon = "❌"
+				} else if f.Risk == audit.RiskWarning {
+					icon = "⚠️"
+				}
+				builder.WriteString(fmt.Sprintf("%s %s (%s): %s\n", icon, f.Key, f.Risk, f.Description))
+			}
+			builder.WriteString(fmt.Sprintf("\nSummary: Total findings: %d\n", len(findings)))
+		}
 	}
 
+	builder.WriteString("\nRecommendation: We recommend using encryption (--encrypt) or a secret manager for sensitive data.")
 	return mcp.NewToolResultText(builder.String()), nil
 }
+
 
 func (s *MCPServer) handlePruneSnapshots(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	dir, err := request.RequireString("directory")

@@ -104,6 +104,66 @@ func Extract(sfxPath string) (*ExtractedSnapshot, error) {
 	}, nil
 }
 
+// ExtractFile reads a single file from the .sfx archive.
+func ExtractFile(sfxPath, fileName string) ([]byte, error) {
+	f, err := os.Open(sfxPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if hdr.Name == fileName {
+			return io.ReadAll(tr)
+		}
+	}
+
+	return nil, fmt.Errorf("file %s not found in archive", fileName)
+}
+
+// PeekManifest reads only the manifest.json from a snapshot and returns the type.
+func PeekManifest(sfxPath string) (any, types.SnapshotType, error) {
+	data, err := ExtractFile(sfxPath, "manifest.json")
+	if err != nil {
+		return nil, "", err
+	}
+
+	var header struct {
+		SnapshotType types.SnapshotType `json:"snapshot_type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, "", err
+	}
+
+	if header.SnapshotType == types.SnapshotTypeStack {
+		var m types.StackManifest
+		json.Unmarshal(data, &m)
+		return &m, types.SnapshotTypeStack, nil
+	}
+
+	var m types.Manifest
+	json.Unmarshal(data, &m)
+	if m.SnapshotType == "" {
+		m.SnapshotType = types.SnapshotTypeContainer
+	}
+	return &m, types.SnapshotTypeContainer, nil
+}
+
 // extractTarGz decompresses a .sfx (tar.gz) file into targetDir.
 func extractTarGz(sfxPath, targetDir string) error {
 	f, err := os.Open(sfxPath)

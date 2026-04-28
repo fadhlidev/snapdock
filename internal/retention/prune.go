@@ -9,6 +9,7 @@ import (
 
 	"github.com/fadhlidev/snapdock/internal/output"
 	"github.com/fadhlidev/snapdock/internal/snapshot"
+	"github.com/fadhlidev/snapdock/pkg/types"
 )
 
 type SnapshotInfo struct {
@@ -39,16 +40,23 @@ func PruneDir(dirPath string, keepLast int) error {
 		fullPath := filepath.Join(dirPath, entry.Name())
 		
 		// We need to peek into the manifest to get the container name and created date.
-		// For efficiency, we'll try to use the reader logic.
-		extracted, err := snapshot.Extract(fullPath)
+		m, snapType, err := snapshot.PeekManifest(fullPath)
 		if err != nil {
 			output.Warningf("Skipping %s during prune: failed to read manifest", entry.Name())
 			continue
 		}
-		
-		name := extracted.Manifest.Container.Name
-		createdAt := extracted.Manifest.CreatedAt.Unix()
-		extracted.Cleanup()
+
+		var name string
+		var createdAt int64
+		if snapType == types.SnapshotTypeStack {
+			sm := m.(*types.StackManifest)
+			name = sm.Project.Name
+			createdAt = sm.CreatedAt.Unix()
+		} else {
+			cm := m.(*types.Manifest)
+			name = cm.Container.Name
+			createdAt = cm.CreatedAt.Unix()
+		}
 
 		containerGroups[name] = append(containerGroups[name], SnapshotInfo{
 			Path:      fullPath,
