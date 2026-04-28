@@ -51,6 +51,15 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	output.Infof("Restoring from %s", color.YellowString(filepath.Base(absPath)))
 
+	snapType, err := snapshot.DetectSnapshotType(absPath)
+	if err != nil {
+		return fmt.Errorf("detect snapshot type: %w", err)
+	}
+
+	if snapType == types.SnapshotTypeStack {
+		return fmt.Errorf("this is a stack snapshot: use 'snapdock stack restore' instead\n  hint: snapshot_type=%q", types.SnapshotTypeStack)
+	}
+
 	// Step 1: Verify checksum
 	if flagRestoreDryRun {
 		if _, err := os.Stat(sfxPath + ".sha256"); err == nil {

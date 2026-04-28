@@ -6,6 +6,7 @@
 
 - **Full State Snapshots**: Capture container config, networks, and mount points.
 - **Volume Support**: Optional inclusion of volume data in the snapshot.
+- **Compose Stack Support**: Snapshot and restore entire Docker Compose stacks.
 - **Security Audit**: Built-in scanner to identify secrets in your snapshots.
 - **Automated Scheduling**: Cron-based automated backups with the SnapDock daemon.
 - **Retention Policies**: "Keep Last N" policies to automatically manage disk space.
@@ -44,7 +45,23 @@ snapdock diff snap-v1.sfx snap-v2.sfx
 snapdock audit snap-v1.sfx
 ```
 
-### 2. Automated Scheduling
+### 2. Compose Stack Management
+Snapshot and restore entire Docker Compose stacks.
+```bash
+# Snapshot a compose stack
+snapdock stack snapshot myproject
+
+# With custom compose file
+snapdock stack snapshot myproject -f /path/to/compose.yaml
+
+# Restore a compose stack
+snapdock stack restore myproject-2025-01-01-stack.sfx
+
+# Dry run to preview
+snapdock stack restore myproject-stack.sfx --dry-run
+```
+
+### 3. Automated Scheduling
 Run SnapDock as a background daemon to handle recurring backups.
 
 **Step 1: Configure jobs**
@@ -58,14 +75,14 @@ snapdock schedule add webapp --cron "@daily" --keep 7 -f backups.yaml
 snapdock daemon start -f backups.yaml
 ```
 
-### 3. Cleanup & Pruning
+### 4. Cleanup & Pruning
 Manually or automatically clean up old snapshots.
 ```bash
 # Keep only the last 5 snapshots in the directory
 snapdock prune ./backups --keep 5
 ```
 
-### 4. AI Integration (MCP)
+### 5. AI Integration (MCP)
 SnapDock includes a **Model Context Protocol (MCP)** server, making it controllable by AI agents.
 
 **Claude Desktop Configuration:**
