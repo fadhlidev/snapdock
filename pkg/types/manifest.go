@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	SnapDockVersion = "0.2.0"
+	SnapDockVersion = "0.3.0"
 	SfxExtension     = ".sfx"
 )
 
